@@ -1,0 +1,31 @@
+services:
+  api:
+    build: .
+    container_name: mi_nuevo_contenedor_api_001
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - IS_DOCKER=true  # <--- ESTO ES LO NUEVO
+      - DB_HOST=db
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+    networks:
+      - fch_network
+
+  db:
+    image: postgres:15-alpine
+    container_name: mi_nueva_db_001
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: repuestos_db
+    networks:
+      - fch_network
+
+networks:
+  fch_network:
+    driver: bridge

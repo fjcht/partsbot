@@ -1,0 +1,599 @@
+// 自定义JS文件（任意加载时机都可用）
+(function () {
+	// 轮询定时器ID
+	let checkFrappeTimer;
+	// 最大等待时长（毫秒），避免无限循环，建议设10分钟
+	const MAX_WAIT_TIME = 1000 * 60 * 10;
+	// 开始等待时间
+	const startWaitTime = Date.now();
+
+	// 递归渲染子菜单
+	function renderChildren(nav_menus) {
+		return `<ul class="ik2b-dropdown-menu">
+			${nav_menus.map(nav_menu => {
+			const hasChildren = nav_menu.children && nav_menu.children.length > 0;
+			const isDir = !nav_menu.route;
+			const iconHtml = nav_menu.icon ? `<img class="ik2b-nav-icon" src="${nav_menu.icon}" alt="${nav_menu.title}">` : '';
+			const navLinkHtml = `<a class="ik2b-nav-link" href="${nav_menu.route}" target="_top">${iconHtml}${nav_menu.title}</a>`
+			return `<li class="ik2b-dropdown-menu-item${hasChildren ? '' : ' ik2b-dropdown-menu-item-link'}">
+					${isDir ? `<span class="ik2b-dropdown-menu-title">${nav_menu.title}</span>`
+					: navLinkHtml}
+					${hasChildren ? renderChildren(nav_menu.children) : ''}
+				</li>`;
+		}).join('')}
+		</ul>`;
+	}
+
+	function renderDropdownMenuCard(nav_menus) {
+		return `
+			<div class="dropdown-menu-card">
+				${renderChildren(nav_menus)}
+			</div>
+		`;
+	}
+
+	/**
+	 * 检查导航项是否应该高亮（当前路径匹配该项或其子菜单）
+	 */
+	function isNavItemActive(item) {
+		const currentPath = window.location.pathname + window.location.hash;
+		// 检查自身路由
+		if (item.route && currentPath.startsWith(item.route)) {
+			return true;
+		}
+		// 递归检查子菜单
+		if (item.children && item.children.length > 0) {
+			return item.children.some(child => isNavItemActive(child));
+		}
+		return false;
+	}
+
+	/**
+	 * 第一层导航项渲染
+	 * @param {*} item
+	 * @returns
+	 */
+	function renderFirstNavItem(nav_menus) {
+		const navMenusHtml = nav_menus.map(item => {
+			const hasChildren = item.children && item.children.length > 0;
+			const isDir = !item.route;
+			const isActive = isNavItemActive(item);
+			const iconHtml = item.icon ? `<img class="ik2b-nav-icon" src="${item.icon}" alt="${item.title}">` : '';
+			const navLinkHtml = `<a class="ik2b-nav-link" href="${item.route}" target="_blank">${iconHtml}${item.title}</a>`
+			const navLinkSpanHtml = `<span class="ik2b-nav-link">${iconHtml}${item.title}</span>`
+			return `
+				<li class="ik2b-nav-item${hasChildren ? ' has-dropdown' : ''}${isActive ? ' active' : ''}">
+					${isDir ? navLinkSpanHtml : navLinkHtml}
+					${hasChildren ? renderDropdownMenuCard(item.children) : ''}
+				</li>
+			`;
+		}).join('');
+		return `
+			<ul class="ik2b-navbar">
+				${navMenusHtml}
+			</ul>
+		`;
+	}
+
+	function isStorePage() {
+		return window.location.pathname.startsWith('/store');
+	}
+
+	function isAppPage() {
+		return window.location.pathname.startsWith('/app');
+	}
+
+	let targetHeader
+	let systemCurrencyList = []
+	let enabledLanguageList = []
+	let currentLanguage = localStorage.getItem('ik2b_language') || '简体中文'
+	let currentCurrency = localStorage.getItem('ik2b_currency') || 'HKD'
+	let navMenusData = [] // 保存菜单数据用于更新title
+
+	/**
+	 * 递归查找匹配当前路径的菜单项
+	 */
+	function findMatchingMenuItem(menus, currentPath) {
+		for (const item of menus) {
+			if (item.route && currentPath.startsWith(item.route)) {
+				return item;
+			}
+			if (item.children && item.children.length > 0) {
+				const found = findMatchingMenuItem(item.children, currentPath);
+				if (found) return found;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * 根据当前路径更新页面title
+	 */
+	function updatePageTitle() {
+		if (!navMenusData.length) return;
+		const currentPath = window.location.pathname + window.location.hash;
+		const matchedItem = findMatchingMenuItem(navMenusData, currentPath);
+		if (matchedItem && matchedItem.title) {
+			document.title = matchedItem.title;
+		}
+	}
+
+	// 监听页签切换
+	document.addEventListener('visibilitychange', function() {
+		if (document.visibilityState === 'visible') {
+			updatePageTitle();
+		}
+	});
+
+	// 渲染locale设置框架（不含options）
+	function renderLocaleSettingFrame() {
+		return `
+				<button class="ik2b-locale-btn" id="ik2b-locale-btn">
+					<span></span>
+				</button>
+				<div class="ik2b-locale-modal" id="ik2b-locale-modal">
+					<div class="ik2b-locale-modal-content">
+						<h3 class="ik2b-locale-title">${__('Set Language and Currency')}</h3>
+						<p class="ik2b-locale-desc">${__('Please select your preferred language and currency. You can update these settings at any time.')}</p>
+						<div class="ik2b-locale-field">
+							<label>${__('Language')}</label>
+							<div class="ik2b-custom-select" id="ik2b-language-select">
+								<div class="ik2b-select-trigger"><span></span><i class="ik2b-select-arrow"></i></div>
+								<div class="ik2b-select-options"></div>
+							</div>
+						</div>
+						<div class="ik2b-locale-field">
+							<label>${__('Currency')}</label>
+							<div class="ik2b-custom-select" id="ik2b-currency-select">
+								<div class="ik2b-select-trigger"><span></span><i class="ik2b-select-arrow"></i></div>
+								<div class="ik2b-select-options"></div>
+							</div>
+						</div>
+						<button class="ik2b-locale-save-btn" id="ik2b-locale-save-btn">${__('Save')}</button>
+					</div>
+				</div>
+		`;
+	}
+
+	// 渲染语言options
+	function renderLanguageOptions() {
+		const optionsHtml = enabledLanguageList.map(lang =>
+			`<div class="ik2b-select-option${lang.language_code === currentLanguage ? ' selected' : ''}" data-value="${lang.language_code}">${lang.language_name}</div>`
+		).join('');
+		$('#ik2b-language-select .ik2b-select-options').html(optionsHtml);
+		const selected = enabledLanguageList.find(l => l.language_code === currentLanguage) || enabledLanguageList[0];
+		if (selected) {
+			$('#ik2b-language-select .ik2b-select-trigger span').text(selected.language_name);
+			$('#ik2b-language-select').attr('data-value', selected.language_code);
+		}
+	}
+
+	// 渲染货币options
+	function renderCurrencyOptions() {
+		const optionsHtml = systemCurrencyList.map(cur =>
+			`<div class="ik2b-select-option${cur.name === currentCurrency ? ' selected' : ''}" data-value="${cur.name}">${cur.name} - ${cur.symbol}</div>`
+		).join('');
+		$('#ik2b-currency-select .ik2b-select-options').html(optionsHtml);
+		const selected = systemCurrencyList.find(c => c.name === currentCurrency) || systemCurrencyList[0];
+		if (selected) {
+			$('#ik2b-currency-select .ik2b-select-trigger span').text(`${selected.name} - ${selected.symbol}`);
+			$('#ik2b-currency-select').attr('data-value', selected.name);
+		}
+	}
+
+	// RTL语言配置
+	const rtlLanguages = ['ar'];
+
+	function updateLocaleSetting(data) {
+		currentLanguage = data.language;
+		currentLanguageName = data.language_name;
+		currentCurrency = data.currency;
+		currentCurrencySymbol = data.currency_symbol;
+		localStorage.setItem('ik2b_language', currentLanguage);
+		localStorage.setItem('ik2b_language_name', currentLanguageName);
+		localStorage.setItem('ik2b_currency', currentCurrency);
+		localStorage.setItem('ik2b_currency_symbol', currentCurrencySymbol);
+		$('#ik2b-locale-btn span').text(`${currentLanguageName}-${currentCurrency}`);
+
+		// 设置文档方向（RTL/LTR）
+		const direction = rtlLanguages.includes(currentLanguage) ? 'rtl' : 'ltr';
+		document.documentElement.setAttribute('dir', direction);
+		console.log('发送广播', currentLanguage, currentCurrency, currentCurrencySymbol);
+		// 广播 locale 设置变更事件
+		window.dispatchEvent(new CustomEvent('ik2b_locale_changed', {
+			detail: {
+				language: currentLanguage,
+				language_name: currentLanguageName,
+				currency: currentCurrency,
+				currency_symbol: currentCurrencySymbol
+			}
+		}));
+	}
+
+	function bindLocaleEvents() {
+		$('#ik2b-locale-btn').on('click', function (e) {
+			e.stopPropagation();
+			$('#ik2b-locale-modal').toggleClass('open');
+		});
+		// 自定义select展开/收起
+		$(document).on('click', '.ik2b-select-trigger', function (e) {
+			e.stopPropagation();
+			const $select = $(this).closest('.ik2b-custom-select');
+			$('.ik2b-custom-select').not($select).removeClass('open');
+			$select.toggleClass('open');
+		});
+		// 选择option
+		$(document).on('click', '.ik2b-select-option', function (e) {
+			e.stopPropagation();
+			const $select = $(this).closest('.ik2b-custom-select');
+			$select.find('.ik2b-select-option').removeClass('selected');
+			$(this).addClass('selected');
+			$select.find('.ik2b-select-trigger span').text($(this).text());
+			$select.attr('data-value', $(this).data('value'));
+			$select.removeClass('open');
+		});
+		$(document).on('click', function (e) {
+			if (!$(e.target).closest('.ik2b-locale-setting').length) {
+				$('#ik2b-locale-modal').removeClass('open');
+			}
+			$('.ik2b-custom-select').removeClass('open');
+		});
+		$('#ik2b-locale-save-btn').on('click', function () {
+			console.log('save locale');
+			const langCode = $('#ik2b-language-select').attr('data-value');
+			const langName = $('#ik2b-language-select .ik2b-select-trigger span').text();
+			const currency = $('#ik2b-currency-select').attr('data-value');
+			const selectedCurrency = systemCurrencyList.find(c => c.name === currency);
+			const currencySymbol = selectedCurrency?.symbol || '';
+
+			$.ajax({
+				url: '/api/method/merchant_app.api.user.UserController.update_user_preferences',
+				method: 'POST',
+				headers: { 'X-Frappe-CSRF-Token': frappe.csrf_token },
+				data: { language: langCode, currency: currency },
+				success: function (response) {
+					if (response.message && response.message.code === 200) {
+						updateLocaleSetting({
+							language: langCode,
+							language_name: langName,
+							currency: currency,
+							currency_symbol: currencySymbol
+						});
+						$('#ik2b-locale-modal').removeClass('open');
+						// if (frappe.ui && frappe.ui.toolbar) {
+						// 	frappe.ui.toolbar.clear_cache()
+						// } else {
+						// 	const timer = setTimeout(() => {
+						// 		clearTimeout(timer);
+						// 		window.location.reload();
+						// 	}, 1000);
+						// }
+					} else {
+						frappe.msgprint(__('Save failed'));
+					}
+				},
+				error: function (error) {
+					frappe.msgprint(__('Save failed'))
+					console.error('Save failed:', error);
+				}
+			});
+		});
+	}
+
+	function renderNavMenus(nav_menus) {
+		console.log(nav_menus);
+
+		const navMenusHtml = renderFirstNavItem(nav_menus);
+		// 找到ik2b-header-navbar 元素
+		const ik2bHeaderNavbar = $('.ik2b-header-navbar');
+		ik2bHeaderNavbar.html(navMenusHtml);
+
+		// 点击一级菜单展开/收起
+		$('.ik2b-nav-item.has-dropdown').on('click', function (e) {
+			// 如果点击的是链接，允许跳转
+			if ($(e.target).closest('a.ik2b-nav-link').length) {
+				return;
+			}
+			e.preventDefault();
+			e.stopPropagation();
+			if ($(this).hasClass('open')) {
+				$(this).removeClass('open');
+			} else {
+				$(this).addClass('open');
+			}
+		});
+		// 点击外部关闭
+		$(document).on('click', function (e) {
+			if (!$(e.target).closest('.ik2b-nav-item.has-dropdown').length) {
+				$('.ik2b-nav-item.has-dropdown').removeClass('open');
+			}
+		});
+		bindLocaleEvents();
+	}
+	function FetchNavMenus(root_menu_title) {
+		$.ajax({
+			url: `/api/method/merchant_app.api.nav_menu.NavMenuReadController.list_nav_menu?root_menu_title=${root_menu_title}`,
+			method: 'GET',
+			success: function (response) {
+				const msg = response?.message;
+				if (Array.isArray(msg)) {
+					navMenusData = msg;
+				} else if (msg && Array.isArray(msg.data)) {
+					navMenusData = msg.data;
+				} else {
+					navMenusData = [];
+				}
+				renderNavMenus(navMenusData);
+				updatePageTitle(); // 首次加载时更新title
+			},
+			error: function (error) {
+				console.error(error);
+			}
+		});
+	}
+
+	function fetchSystemCurrencyList() {
+		$.ajax({
+			url: `/api/method/merchant_app.api.currency.CurrencyController.get_system_currency_list`,
+			method: 'GET',
+			success: function (response) {
+				if (response.message.code === 200) {
+					systemCurrencyList = response.message?.data || [];
+					renderCurrencyOptions();
+				} else {
+					console.error("获取系统货币列表失败: ", response.message);
+				}
+			},
+			error: function (error) {
+				console.error("获取系统货币列表失败: ", error);
+			}
+		});
+	}
+
+	function fetchEnabledLanguageList() {
+		$.ajax({
+			url: `/api/method/merchant_app.api.language.LanguageController.get_enabled_language_list_api`,
+			method: 'GET',
+			success: function (response) {
+				enabledLanguageList = response.message?.data || [];
+				renderLanguageOptions();
+			},
+			error: function (error) {
+				console.error("获取启用语言列表失败: ", error);
+			}
+		});
+	}
+
+	function bindLogoutEvents() {
+		$('#ik2b-logout-btn').on('click', function () {
+			if (frappe.app) {
+				frappe.app.logout()
+			} else {
+				logout();
+			}
+		});
+	}
+
+	// 绑定刷新事件
+	function bindReloadEvents() {
+		$('#ik2b-reload-btn').on('click', function () {
+			if (frappe.ui && frappe.ui.toolbar) {
+				frappe.ui.toolbar.clear_cache()
+			} else {
+				window.location.reload();
+			}
+		});
+	}
+
+	// 绑定切换全宽事件
+	function bindToggleFullWidthEvents() {
+		$('#ik2b-toggle-full-width-btn').on('click', function () {
+			if (frappe.ui && frappe.ui.toolbar) {
+				frappe.ui.toolbar.toggle_full_width()
+			} else {
+				$('body').toggleClass('full-width');
+				localStorage.setItem('container_fullwidth', $('body').hasClass('full-width'));
+			}
+		});
+	}
+
+	function initFullWidth() {
+		if (localStorage.getItem('container_fullwidth') === 'true') {
+			if (!$('body').hasClass('full-width')) {
+				$('body').addClass('full-width');
+			}
+		} else {
+			if ($('body').hasClass('full-width')) {
+				$('body').removeClass('full-width');
+			}
+		}
+	}
+
+	// 绑定切换主题事件
+	function bindToggleThemeEvents() {
+		if (frappe.ui && frappe.ui.toolbar) {
+			$('#ik2b-toggle-theme-btn').on('click', function () {
+				if (frappe.ui && frappe.ui.toolbar) {
+					frappe.ui.toolbar.toggle_theme()
+				} else {
+
+				}
+			});
+		} else {
+			$('#ik2b-toggle-theme-btn').remove();
+		}
+	}
+
+	function renderNavUserHtml() {
+		return `
+		<li class="nav-item dropdown dropdown-navbar-user dropdown-mobile">
+			<button class="btn-reset nav-link" data-toggle="dropdown" aria-label="User Menu" aria-expanded="true">
+				<span class="avatar avatar-medium">
+					<div id="ik2b-avatar-box" class="avatar-frame standard-image" style="background-color: var(--dark-green-avatar-bg); color: var(--dark-green-avatar-color)"></div>
+				</span>
+			</button>
+			<div class="dropdown-menu dropdown-menu-right" id="toolbar-user" role="menu">
+			    <span class="dropdown-item" id="ik2b-user-name"></span>
+			    <span class="dropdown-item" id="ik2b-shop-name"></span>
+				<button id="ik2b-reload-btn" class="btn-reset dropdown-item">${__('Reload')}</button>
+				<button id= "ik2b-toggle-full-width-btn" class="btn-reset dropdown-item">${__('Toggle Full Width')}</button>
+				<button id="ik2b-toggle-theme-btn" class="btn-reset dropdown-item" onclick="return new frappe.ui.ThemeSwitcher().show()">${__('Toggle Theme')}</button>
+				<div class="dropdown-divider"></div>
+				<a class="dropdown-item" href="/update-password">${__('Reset Password')}</a>
+				<button id="ik2b-logout-btn" class="btn-reset dropdown-item">${__('Log out')}</button>
+			</div>
+		</li>
+		`
+	}
+
+	// 渲染header框架
+	function renderHeaderFrame() {
+		targetHeader.empty();
+
+		targetHeader.html(`<div class="container">
+			<div class="ik2b-navbar-container">
+				 <div class="navbar-brand ik2b-nav-home">
+					 <a href="/store#/search">CassChoice</a>
+				 </div>
+				 <div class="ik2b-header-navbar"></div>
+			 </div>
+			 <ul class="navbar-nav">
+				<li class="nav-item ik2b-locale-setting">
+					${renderLocaleSettingFrame()}
+				</li>
+				${renderNavUserHtml()}
+			 </ul>
+		 </div>`);
+		targetHeader.css('visibility', 'visible');
+
+		bindReloadEvents();
+		bindToggleFullWidthEvents();
+		bindToggleThemeEvents();
+		bindLogoutEvents();
+	}
+
+	function logout() {
+		if (window.location.href.includes('login')) {
+			return;
+		}
+		$.ajax({
+			url: `/api/method/merchant_app.api.user.UserController.logout`,
+			method: 'POST',
+			headers: { 'X-Frappe-CSRF-Token': frappe?.csrf_token },
+			success: function (response) {
+				console.log(response.message);
+				if (response.message.code === 200) {
+					redirectToLogin()
+				} else {
+					frappe.msgprint(__('Logout failed'));
+				}
+			},
+			error: function (error) {
+				console.error("退出登录失败: ", error);
+				frappe.msgprint(__('Logout failed'));
+				if (!window.location.href.includes('login')) {
+					redirectToLogin()
+				}
+			}
+		});
+	}
+
+	// 重定向到登录页
+	function redirectToLogin() {
+		if (window.location.href.includes('login')) {
+			return;
+		}
+		if(window.location?.pathname.startsWith('/store')) {
+			const newHref = `${window.location.origin}/login?redirect-to=${window.location.pathname}${window.location.hash}`;
+			window.location.href = newHref;
+		}  else if (window.location?.pathname.startsWith('/app')) {
+			const newHref = `${window.location.origin}/login?redirect-to=${window.location.pathname}`;
+			window.location.href = newHref;
+		} else {
+			const newHref = `${window.location.origin}/login`;
+			window.location.href = newHref;
+		}
+	}
+	function fetchCurrentUser() {
+		$.ajax({
+			url: `/api/method/merchant_app.api.user.UserController.get_current_user`,
+			method: 'GET',
+			success: function (response) {
+				console.log(response.message);
+				if (response.message.code === 200) {
+					const user = response.message?.data || {};
+					updateLocaleSetting({
+						language: user.language,
+						language_name: user.language_name,
+						currency: user.currency,
+						currency_symbol: user.currency_symbol
+					});
+					if (user.name) {
+					$('#ik2b-avatar-box').text(user.name.charAt(0));
+					$('#ik2b-avatar-box').attr('title', user.name);
+					$('#ik2b-avatar-box').parent().attr('title', user.name);
+					$('#ik2b-user-name').text(user.name);}else{
+						$('#ik2b-user-name').remove();
+					}
+					if (user.store_name) {
+						$('#ik2b-shop-name').text(user.store_name);
+					} else {
+						$('#ik2b-shop-name').remove();
+					}
+				} else {
+					console.error("获取当前用户失败: ", response.message);
+					redirectToLogin()
+				}
+			},
+			error: function (error) {
+				console.error("获取当前用户失败: ", error);
+				redirectToLogin()
+			}
+		});
+	}
+
+	function isVisibleOriginalHeader() {
+		targetHeader = $('.sticky-top header');
+		if (isStorePage()) {
+			targetHeader = $('body nav');
+		} else if (isAppPage()) {
+			targetHeader = $('body header');
+		} else {
+			console.warn('no target header');
+			return false;
+		}
+		if (targetHeader.is(':visible') && targetHeader.children().length > 0) {
+			return true
+		}
+		return false
+	}
+
+
+	let pollCount = 0;
+	const MAX_POLL_COUNT = 100;
+
+	function checkJQueryLoaded() {
+		pollCount++;
+		// console.log('isVisibleOriginalHeader')
+		if (window.$ && isVisibleOriginalHeader()) {
+			console.log('初始化')
+			// 初始化全宽
+			initFullWidth();
+			renderHeaderFrame()
+			FetchNavMenus('casschoice');
+			fetchSystemCurrencyList();
+			fetchEnabledLanguageList();
+			fetchCurrentUser();
+
+			clearInterval(checkFrappeTimer); // 清除定时器
+			return;
+		}
+		if (pollCount >= MAX_POLL_COUNT || Date.now() - startWaitTime > MAX_WAIT_TIME) {
+			clearInterval(checkFrappeTimer);
+			// console.error("等待frappe加载超时，未执行自定义逻辑");
+		}
+	}
+
+	// 启动轮询：每10毫秒检查一次frappe是否加载完成，最多100次
+	checkFrappeTimer = setInterval(checkJQueryLoaded, 10);
+})();
