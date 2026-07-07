@@ -27,17 +27,16 @@ def _inferir_con_gemini(marca: str) -> list:
     if not settings.gemini_api_key:
         return []
     try:
-        import google.generativeai as genai
+        from google import genai
 
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        client = genai.Client(api_key=settings.gemini_api_key)
         prompt = (
             f"Lista los modelos de vehículos más comunes de la marca '{marca}' "
             f"con su rango de años de producción. Responde SOLO con JSON válido "
             f'con esta forma: [{{"modelo": "X", "anio_inicio": 2015, "anio_fin": 2023}}]. '
             f"Máximo 15 modelos."
         )
-        resp = model.generate_content(prompt)
+        resp = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         texto = resp.text.strip()
         # Extraer el bloque JSON.
         inicio = texto.find("[")

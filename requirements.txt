@@ -19,4 +19,5 @@ bcrypt==4.2.0
 python-multipart==0.0.9
 email-validator==2.2.0
 pydantic[email]==2.7.1
-google-generativeai==0.8.3
+# SDK nuevo de Google (reemplaza google-generativeai legacy, EOL nov 2025)
+google-genai>=2.10.0

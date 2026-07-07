@@ -108,11 +108,14 @@ def _inferir_gemini(prompt: str) -> Optional[str]:
     if not settings.gemini_api_key:
         return None
     try:
-        import google.generativeai as genai
+        from google import genai
 
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        resp = model.generate_content(prompt)
+        client = genai.Client(api_key=settings.gemini_api_key)
+        # Usar gemini-2.5-flash (o gemini-flash-latest para siempre la última versión)
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
         return resp.text
     except Exception as exc:  # noqa: BLE001
         logger.warning("Proveedor Gemini falló: %s", exc)

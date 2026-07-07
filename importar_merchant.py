@@ -111,7 +111,12 @@ def importar_piezas(db, results: list) -> int:
 
 def main():
     parser = argparse.ArgumentParser(description="Importador offline de merchant.txt")
-    parser.add_argument("archivo", help="Ruta al archivo JSON exportado (merchant.txt)")
+    parser.add_argument(
+        "archivo",
+        nargs="?",
+        default="merchant.txt",
+        help="Ruta al archivo JSON exportado (default: merchant.txt en el directorio actual)",
+    )
     args = parser.parse_args()
 
     try:
