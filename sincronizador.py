@@ -59,6 +59,42 @@ def _to_int_year(valor) -> Optional[int]:
     return None
 
 
+def _parse_vehicle_detail_str(texto: str):
+    """
+    Parsea un string de compatibilidad de CassChoice.
+
+    Ejemplos:
+        "CHANGAN Alsvin 2018~2024"  -> ("CHANGAN", "Alsvin", 2018, 2024)
+        "CHERY Tiggo 4 2019-2023"   -> ("CHERY", "Tiggo 4", 2019, 2023)
+        "GEELY Coolray 2020"        -> ("GEELY", "Coolray", 2020, 2020)
+    Devuelve (marca, modelo, anio_inicio, anio_fin).
+    """
+    import re
+
+    texto = (texto or "").strip()
+    if not texto:
+        return "", "", None, None
+
+    # Detectar rango o año al final (2018~2024 / 2018-2024 / 2018).
+    m = re.search(r"(\d{4})\s*[~\-–/]\s*(\d{4})\s*$", texto)
+    anio_ini = anio_fin = None
+    resto = texto
+    if m:
+        anio_ini = _to_int_year(m.group(1))
+        anio_fin = _to_int_year(m.group(2))
+        resto = texto[: m.start()].strip()
+    else:
+        m2 = re.search(r"(\d{4})\s*$", texto)
+        if m2:
+            anio_ini = anio_fin = _to_int_year(m2.group(1))
+            resto = texto[: m2.start()].strip()
+
+    partes = resto.split()
+    marca = partes[0] if partes else ""
+    modelo = " ".join(partes[1:]) if len(partes) > 1 else ""
+    return marca, modelo, anio_ini, anio_fin
+
+
 # ---------------------------------------------------------------------------
 # FASE A — Catálogo de vehículos
 # ---------------------------------------------------------------------------
@@ -195,18 +231,23 @@ def _crear_compatibilidades_desde_producto(db, autoparte: models.Autoparte, prod
 
     if vehicle_details:
         for vd in vehicle_details:
-            marca = (vd.get("make") or vd.get("brand") or "").strip()
-            modelo = (vd.get("model") or "").strip()
-            anio = _to_int_year(vd.get("year"))
-            clave = (marca, modelo, anio, anio)
+            # La API devuelve strings tipo "CHANGAN Alsvin 2018~2024"
+            # o, en algunas variantes, dicts {make, model, year}.
+            if isinstance(vd, dict):
+                marca = (vd.get("make") or vd.get("brand") or "").strip()
+                modelo = (vd.get("model") or "").strip()
+                anio_ini = anio_fin = _to_int_year(vd.get("year"))
+            else:
+                marca, modelo, anio_ini, anio_fin = _parse_vehicle_detail_str(str(vd))
+            clave = (marca, modelo, anio_ini, anio_fin)
             if marca and clave not in existentes:
                 db.add(
                     models.Compatibilidad(
                         autoparte_id=autoparte.id,
                         marca_vehiculo=marca,
                         modelo_vehiculo=modelo,
-                        anio_inicio=anio,
-                        anio_fin=anio,
+                        anio_inicio=anio_ini,
+                        anio_fin=anio_fin,
                     )
                 )
                 existentes.add(clave)
@@ -256,8 +297,13 @@ def _procesar_resultado_parte(db, entry: dict) -> Optional[models.Autoparte]:
         logger.warning("Sin productos para %s", parts_number)
         return None
 
-    # Usar el primer producto como base para descripción/categoría/imagen.
+    # Elegir como base el primer producto con título/categoría no vacío
+    # (algunos productos vienen con product_title = "").
     base = productos[0]
+    for prod in productos:
+        if (prod.get("product_title") or prod.get("category_name") or "").strip():
+            base = prod
+            break
     descripcion = base.get("product_title") or base.get("category_name") or parts_number
     categoria = base.get("category_name")
     imagen = _extraer_imagen(base)
@@ -286,6 +332,21 @@ def _procesar_resultado_parte(db, entry: dict) -> Optional[models.Autoparte]:
     mejor_fob = None
     for prod in productos:
         _clasificar_codigo(autoparte, prod.get("brand_type"), prod.get("parts_number") or parts_number)
+        # Clasificar también los números de reemplazo (OE/OEM/aftermarket).
+        # CassChoice codifica el tipo en brand_code: p.ej. "CHANGAN_OEM",
+        # "CHANGAN_AM" (aftermarket) o "CHANGAN" (original/OE).
+        for rep in prod.get("replace_parts_numbers", []) or []:
+            bc = (rep.get("brand_code") or "").upper()
+            num = rep.get("parts_number")
+            if not num:
+                continue
+            if bc.endswith("_OEM"):
+                tipo = "OEM"
+            elif bc.endswith("_AM") or bc.endswith("_AFTERMARKET"):
+                tipo = "AM"
+            else:
+                tipo = "OE"
+            _clasificar_codigo(autoparte, tipo, num)
         precio_fob = _extraer_precio_usd(prod)
         precio_venta = aplicar_margen(precio_fob)
         if precio_fob is not None and (mejor_fob is None or precio_fob < mejor_fob):

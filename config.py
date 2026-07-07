@@ -38,6 +38,9 @@ class Settings:
     # --- CassChoice API ---
     cass_sid: str = _get("CASS_SID", "")
     cass_token: str = _get("CASS_TOKEN", "")
+    # Credenciales para login automático (obtienen sid/token sin copiar a mano).
+    cass_usuario: str = _get("CASS_USUARIO", "")
+    cass_password: str = _get("CASS_PASSWORD", "")
     cass_base_url: str = _get(
         "CASS_BASE_URL", "https://merchant.casschoice.com"
     )
