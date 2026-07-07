@@ -2,10 +2,17 @@ import httpx
 import json
 import os
 
-# CONFIGURACIÓN (Actualiza estos valores si tu sesión expira)
-TOKEN = "31a6bcbd3fffae94ada199308422874df20e102d35ff79675de9a352"
-SID = "ddeea2c1454138a60d581c2577fd8809ac21a79b7e270abf7fe4a3b5"
-URL = "https://merchant.casschoice.com/api/method/merchant_app.api.product.ProductController.query_commodity"
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# CONFIGURACIÓN — leída desde variables de entorno (.env). Nunca hardcodear.
+TOKEN = os.getenv("CASS_TOKEN", "")
+SID = os.getenv("CASS_SID", "")
+URL = os.getenv(
+    "CASS_QUERY_COMMODITY_URL",
+    "https://merchant.casschoice.com/api/method/merchant_app.api.product.ProductController.query_commodity",
+)
 
 def scraper_partes(lista_codigos):
     headers = {

@@ -1,115 +1,406 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>Consola de Inteligencia en Repuestos</title>
-    <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 40px; margin: 0; }
-        .wrapper { max-width: 900px; margin: 0 auto; }
-        .panel { background: #1e293b; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); border: 1px solid #334155; }
-        h1 { text-align: center; color: #38bdf8; margin-bottom: 30px; font-size: 24px; }
-        .grid-inputs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 20px; }
-        label { display: block; margin-bottom: 8px; color: #94a3b8; font-weight: 600; }
-        input { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: white; box-sizing: border-box; }
-        button { width: 100%; padding: 14px; background: #0284c7; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
-        button:hover { background: #0369a1; }
-        .loading { display: none; text-align: center; color: #38bdf8; margin: 20px 0; font-weight: bold; }
-        .card-result { display: none; background: #0f172a; padding: 25px; border-radius: 8px; margin-top: 30px; border-left: 5px solid #38bdf8; }
-        .badge { background: #1e293b; padding: 5px 10px; border-radius: 4px; font-size: 12px; color: #38bdf8; border: 1px solid #38bdf8; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; background: #1e293b; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #334155; }
-        th { color: #38bdf8; background-color: #111827; }
-    </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FCH AutoLab — Repuestos B2B</title>
+<style>
+  :root{
+    --azul:#0b3d91; --azul-2:#1554c0; --acento:#ff6a00; --gris:#f4f6f9;
+    --texto:#1c2431; --borde:#e2e8f0; --ok:#1a9e5c; --sombra:0 4px 18px rgba(20,40,80,.08);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Roboto,Arial,sans-serif;background:var(--gris);color:var(--texto);line-height:1.45}
+  a{color:inherit;text-decoration:none}
+  button{cursor:pointer;font-family:inherit}
+
+  /* HEADER */
+  header{background:linear-gradient(120deg,var(--azul),var(--azul-2));color:#fff;position:sticky;top:0;z-index:50;box-shadow:var(--sombra)}
+  .topbar{max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:18px;padding:12px 18px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.25rem;white-space:nowrap}
+  .logo .badge{background:var(--acento);border-radius:8px;padding:4px 8px;font-size:.85rem}
+  .searchbox{flex:1;display:flex;background:#fff;border-radius:10px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.05)}
+  .searchbox input{flex:1;border:0;padding:12px 14px;font-size:.95rem;color:var(--texto);outline:none}
+  .searchbox button{background:var(--acento);color:#fff;border:0;padding:0 20px;font-weight:700}
+  .header-actions{display:flex;align-items:center;gap:10px}
+  .btn-icon{background:rgba(255,255,255,.14);border:0;color:#fff;padding:9px 14px;border-radius:9px;font-weight:600;position:relative}
+  .btn-icon:hover{background:rgba(255,255,255,.26)}
+  .cart-count{position:absolute;top:-6px;right:-6px;background:var(--acento);color:#fff;border-radius:50%;min-width:20px;height:20px;font-size:.72rem;display:flex;align-items:center;justify-content:center;padding:0 5px}
+
+  .subbar{background:rgba(0,0,0,.12);font-size:.82rem}
+  .subbar div{max-width:1200px;margin:0 auto;padding:6px 18px;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+  .subbar select{border:0;border-radius:6px;padding:5px 8px;font-size:.82rem}
+
+  /* LAYOUT */
+  main{max-width:1200px;margin:22px auto;padding:0 18px}
+  .hint{color:#5b6472;font-size:.9rem;margin-bottom:14px}
+  .estado{padding:40px;text-align:center;color:#5b6472;background:#fff;border-radius:14px;box-shadow:var(--sombra)}
+
+  /* GRID PRODUCTOS */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:18px}
+  .card{background:#fff;border-radius:14px;box-shadow:var(--sombra);overflow:hidden;display:flex;flex-direction:column;border:1px solid var(--borde)}
+  .card .img{height:170px;background:#eef2f8;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .card .img img{width:100%;height:100%;object-fit:contain}
+  .ph-img{background:repeating-linear-gradient(45deg,#eef2f8,#eef2f8 10px,#e4e9f2 10px,#e4e9f2 20px);border-radius:8px}
+  .card .body{padding:14px;display:flex;flex-direction:column;gap:9px;flex:1}
+  .card h3{font-size:1.02rem;line-height:1.3}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:.7rem;background:var(--gris);border:1px solid var(--borde);border-radius:20px;padding:3px 9px;color:#42506a}
+  .chip.q{background:#fff4ec;border-color:#ffd8bd;color:#c2531a}
+  .codes{font-size:.78rem;color:#42506a;display:grid;gap:2px}
+  .codes b{color:var(--texto)}
+  .price{font-size:1.5rem;font-weight:800;color:var(--azul)}
+  .price small{font-size:.72rem;font-weight:600;color:#7a8494;display:block}
+  .compat{border-top:1px dashed var(--borde);padding-top:8px}
+  .compat .t{font-size:.74rem;font-weight:700;color:#42506a;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+  .compat table{width:100%;border-collapse:collapse;font-size:.78rem}
+  .compat td{padding:3px 4px;border-bottom:1px solid #f0f3f8}
+  .compat .rango{color:var(--ok);font-weight:700;white-space:nowrap}
+  .add{margin-top:auto;background:var(--acento);color:#fff;border:0;padding:11px;border-radius:9px;font-weight:700;font-size:.95rem}
+  .add:hover{filter:brightness(.95)}
+
+  /* MODALES */
+  .overlay{position:fixed;inset:0;background:rgba(15,25,45,.55);display:none;align-items:flex-start;justify-content:center;z-index:100;padding:40px 16px;overflow:auto}
+  .overlay.open{display:flex}
+  .modal{background:#fff;border-radius:16px;width:100%;max-width:520px;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
+  .modal.wide{max-width:760px}
+  .modal .head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--borde)}
+  .modal .head h2{font-size:1.15rem}
+  .modal .close{background:none;border:0;font-size:1.5rem;color:#7a8494;line-height:1}
+  .modal .content{padding:20px;max-height:70vh;overflow:auto}
+  .field{margin-bottom:14px}
+  .field label{display:block;font-size:.82rem;font-weight:600;margin-bottom:5px}
+  .field input,.field select{width:100%;padding:11px;border:1px solid var(--borde);border-radius:9px;font-size:.95rem}
+  .btn-primary{width:100%;background:var(--azul);color:#fff;border:0;padding:12px;border-radius:9px;font-weight:700;font-size:1rem}
+  .btn-primary:hover{background:var(--azul-2)}
+  .tabs{display:flex;gap:8px;margin-bottom:16px}
+  .tabs button{flex:1;padding:9px;border:1px solid var(--borde);background:#fff;border-radius:8px;font-weight:600}
+  .tabs button.active{background:var(--azul);color:#fff;border-color:var(--azul)}
+  .msg{font-size:.85rem;padding:9px 12px;border-radius:8px;margin-bottom:12px;display:none}
+  .msg.err{background:#fdeaea;color:#b4232a;display:block}
+  .msg.ok{background:#e8f7ef;color:#137a45;display:block}
+
+  /* CARRITO */
+  .cart-item{display:flex;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--borde)}
+  .cart-item img{width:56px;height:56px;object-fit:contain;background:#eef2f8;border-radius:8px}
+  .cart-item .info{flex:1;font-size:.86rem}
+  .qty{display:flex;align-items:center;gap:6px}
+  .qty button{width:26px;height:26px;border:1px solid var(--borde);background:#fff;border-radius:6px;font-weight:700}
+  .cart-total{display:flex;justify-content:space-between;font-size:1.2rem;font-weight:800;margin:16px 0}
+  .link-del{background:none;border:0;color:#b4232a;font-size:.78rem;text-decoration:underline}
+  .orden-row{border:1px solid var(--borde);border-radius:10px;padding:12px;margin-bottom:10px;font-size:.88rem}
+  .estado-badge{background:#fff4ec;color:#c2531a;border-radius:20px;padding:2px 10px;font-size:.74rem;font-weight:700}
+  footer{text-align:center;color:#7a8494;font-size:.82rem;padding:26px}
+  @media(max-width:640px){.topbar{flex-wrap:wrap}.searchbox{order:3;width:100%;flex-basis:100%}}
+</style>
 </head>
 <body>
-<div class="wrapper">
-    <div class="panel">
-        <h1>Análisis Cruzado de Números de Parte</h1>
-        <div class="grid-inputs">
-            <div><label>Marca</label><input type="text" id="marca" placeholder="Ej. Toyota"></div>
-            <div><label>Modelo</label><input type="text" id="modelo" placeholder="Ej. Corolla"></div>
-            <div><label>Año</label><input type="number" id="anio" placeholder="Ej. 2012"></div>
-            <div><label>Pieza (Descripción)</label><input type="text" id="pieza" placeholder="Ej. Pastillas"></div>
-            <div style="grid-column: span 2;"><label>Número de Parte</label><input type="text" id="numero_parte" placeholder="Ej. 04465-06100"></div>
-        </div>
-        
-        <button onclick="ejecutarAnalisis()">Consultar Sistema</button>
-        <button onclick="descargarCatálogoCSV()" style="background: #10b981; margin-top: 10px;">Generar y Descargar Catálogo CSV</button>
-        
-        <div class="loading" id="loader">Orquestando datos... Por favor espera.</div>
-        
-        <div class="card-result" id="resultado">
-            <h2>OEM Detectado: <span id="oem-val" style="color:#f43f5e"></span> <span class="badge" id="origen-val"></span></h2>
-            <p><strong>Descripción:</strong> <span id="desc-val"></span></p>
-            <p><strong>Costo:</strong> $<span id="precio-val"></span></p>
-            <p><strong>Disponibilidad:</strong> <span id="stock-val"></span></p>
-            <h3 style="margin-top:25px; color:#38bdf8;">Vehículos Compatibles:</h3>
-            <table>
-                <thead><tr><th>Marca</th><th>Modelo</th><th>Desde</th><th>Hasta</th></tr></thead>
-                <tbody id="tabla-cuerpo"></tbody>
-            </table>
-        </div>
+<header>
+  <div class="topbar">
+    <div class="logo"><span class="badge">FCH</span> AutoLab</div>
+    <form class="searchbox" id="formBusqueda">
+      <input id="inputBusqueda" type="text" placeholder="Busca por pieza (ES/EN), marca, modelo o número de parte… ej. 'pastillas de freno' o 'brake pads'" />
+      <button type="submit">Buscar</button>
+    </form>
+    <div class="header-actions">
+      <button class="btn-icon" id="btnCarrito">🛒 Carrito<span class="cart-count" id="cartCount" style="display:none">0</span></button>
+      <button class="btn-icon" id="btnOrdenes" style="display:none">📦 Órdenes</button>
+      <button class="btn-icon" id="btnCuenta">👤 <span id="lblCuenta">Ingresar</span></button>
     </div>
+  </div>
+  <div class="subbar">
+    <div>
+      <span>Filtrar:</span>
+      <select id="selMarca"><option value="">Todas las marcas</option></select>
+      <select id="selModelo"><option value="">Todos los modelos</option></select>
+      <input id="inputAnio" type="number" placeholder="Año" style="width:90px;border:0;border-radius:6px;padding:5px 8px" />
+      <button class="btn-icon" id="btnFiltrar" style="padding:5px 12px">Aplicar</button>
+      <span style="margin-left:auto;opacity:.85">Precios con margen incluido · B2B</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <p class="hint" id="hint">🔎 Búsqueda inteligente bilingüe. Escribe en español o inglés — el sistema traduce automáticamente y agrupa las compatibilidades por rangos de años.</p>
+  <div id="resultados" class="grid"></div>
+  <div id="estado" class="estado">Realiza una búsqueda o selecciona una marca para ver los repuestos disponibles.</div>
+</main>
+
+<!-- MODAL CUENTA -->
+<div class="overlay" id="ovCuenta">
+  <div class="modal">
+    <div class="head"><h2 id="tituloCuenta">Acceder a tu cuenta</h2><button class="close" data-close="ovCuenta">&times;</button></div>
+    <div class="content">
+      <div class="tabs">
+        <button id="tabLogin" class="active">Ingresar</button>
+        <button id="tabRegistro">Registrarse</button>
+      </div>
+      <div class="msg" id="msgCuenta"></div>
+      <div class="field" id="fldNombre" style="display:none"><label>Nombre / Empresa</label><input id="inNombre" type="text" /></div>
+      <div class="field"><label>Email</label><input id="inEmail" type="email" /></div>
+      <div class="field"><label>Contraseña</label><input id="inPass" type="password" /></div>
+      <button class="btn-primary" id="btnAuth">Ingresar</button>
+    </div>
+  </div>
 </div>
 
+<!-- MODAL CARRITO -->
+<div class="overlay" id="ovCarrito">
+  <div class="modal">
+    <div class="head"><h2>Tu carrito</h2><button class="close" data-close="ovCarrito">&times;</button></div>
+    <div class="content">
+      <div id="cartItems"></div>
+      <div class="cart-total"><span>Total</span><span id="cartTotal">$0.00</span></div>
+      <button class="btn-primary" id="btnCheckout">Crear orden (Pendiente)</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ORDENES -->
+<div class="overlay" id="ovOrdenes">
+  <div class="modal wide">
+    <div class="head"><h2>Mis órdenes</h2><button class="close" data-close="ovOrdenes">&times;</button></div>
+    <div class="content" id="ordenesBody"></div>
+  </div>
+</div>
+
+<footer>© <span id="anio"></span> FCH AutoLab · Plataforma B2B de repuestos · Integración CassChoice</footer>
+
 <script>
-    async function ejecutarAnalisis() {
-        // Obtener valores
-        const marca = document.getElementById('marca').value;
-        const modelo = document.getElementById('modelo').value;
-        const anio = document.getElementById('anio').value;
-        const pieza = document.getElementById('pieza').value;
-        const nParte = document.getElementById('numero_parte').value;
+const API = window.location.origin.includes("localhost") || window.location.port ? "" : "";
+const $ = (id)=>document.getElementById(id);
+let token = localStorage.getItem("fch_token") || null;
+let usuario = JSON.parse(localStorage.getItem("fch_user") || "null");
 
-        // Validar: Al menos debe haber Marca o Número de Parte
-        if(!marca && !nParte) { 
-            alert("Por favor, ingresa al menos una Marca o un Número de Parte para buscar."); 
-            return; 
-        }
+function headers(auth=false){
+  const h = {"Content-Type":"application/json"};
+  if(auth && token) h["Authorization"] = "Bearer "+token;
+  return h;
+}
+function money(v){ return "$"+Number(v||0).toFixed(2); }
 
-        document.getElementById('loader').style.display = 'block'; 
-        document.getElementById('resultado').style.display = 'none';
+/* ---------- Sesión ---------- */
+function refreshCuenta(){
+  $("lblCuenta").textContent = usuario ? (usuario.nombre || usuario.email.split("@")[0]) : "Ingresar";
+  $("btnOrdenes").style.display = usuario ? "inline-flex" : "none";
+}
+async function cargarMarcas(){
+  try{
+    const r = await fetch(API+"/catalogo/marcas");
+    const d = await r.json();
+    const sel = $("selMarca");
+    (d.marcas||[]).forEach(m=>{ const o=document.createElement("option"); o.value=m; o.textContent=m; sel.appendChild(o); });
+  }catch(e){}
+}
+async function cargarModelos(marca){
+  const sel = $("selModelo");
+  sel.innerHTML = '<option value="">Todos los modelos</option>';
+  if(!marca) return;
+  try{
+    const r = await fetch(API+"/catalogo/modelos?marca="+encodeURIComponent(marca));
+    const d = await r.json();
+    (d.modelos||[]).forEach(m=>{ const o=document.createElement("option"); o.value=m.modelo; o.textContent=m.modelo+(m.anio_min?` (${m.anio_min}-${m.anio_max})`:""); sel.appendChild(o); });
+  }catch(e){}
+}
 
-        // Construcción dinámica de la URL
-        let queryParams = new URLSearchParams();
-        if(marca) queryParams.append('marca', marca);
-        if(modelo) queryParams.append('modelo', modelo);
-        if(anio) queryParams.append('anio', anio);
-        if(pieza) queryParams.append('pieza', pieza);
-        if(nParte) queryParams.append('numero_parte', nParte);
+/* ---------- Búsqueda ---------- */
+let debounceT=null;
+function debounceBuscar(){ clearTimeout(debounceT); debounceT=setTimeout(buscar, 450); }
 
-        try {
-            const res = await fetch(`http://localhost:8000/consultar?${queryParams.toString()}`);
-            const data = await res.json();
-            
-            document.getElementById('loader').style.display = 'none'; 
-            document.getElementById('resultado').style.display = 'block';
+async function buscar(){
+  const termino = $("inputBusqueda").value.trim();
+  const marca = $("selMarca").value;
+  const modelo = $("selModelo").value;
+  const anio = $("inputAnio").value;
+  $("estado").textContent = "Buscando…";
+  $("estado").style.display="block";
+  $("resultados").innerHTML="";
 
-            // Actualizar interfaz
-            document.getElementById('oem-val').innerText = data.oem || "N/A"; 
-            document.getElementById('origen-val').innerText = data.origen || "N/A";
-            document.getElementById('desc-val').innerText = data.descripcion || "No disponible"; 
-            document.getElementById('precio-val').innerText = data.precio || "0.00";
-            document.getElementById('stock-val').innerText = data.disponibilidad || "N/A";
-
-            const tbody = document.getElementById('tabla-cuerpo'); 
-            tbody.innerHTML = "";
-            if(data.compatibilidades && data.compatibilidades.length > 0) {
-                data.compatibilidades.forEach(c => {
-                    tbody.innerHTML += `<tr><td>${c.marca}</td><td>${c.modelo}</td><td>${c.desde || '-'}</td><td>${c.hasta || 'Actual'}</td></tr>`;
-                });
-            } else {
-                tbody.innerHTML = "<tr><td colspan='4'>No se encontraron vehículos compatibles.</td></tr>";
-            }
-        } catch (error) {
-            document.getElementById('loader').style.display = 'none'; 
-            alert("Error al conectar con el backend. Verifica que el servidor esté encendido.");
-        }
+  try{
+    let data;
+    if(termino){
+      const r = await fetch(API+"/busqueda/semantica",{method:"POST",headers:headers(),body:JSON.stringify({termino,marca:marca||null,modelo:modelo||null,anio:anio?Number(anio):null})});
+      data = await r.json();
+    }else{
+      const qs = new URLSearchParams();
+      if(marca)qs.set("marca",marca); if(modelo)qs.set("modelo",modelo); if(anio)qs.set("anio",anio);
+      const r = await fetch(API+"/consultar?"+qs.toString());
+      data = await r.json();
     }
+    renderResultados(data.resultados||[]);
+  }catch(e){
+    $("estado").textContent = "Error al buscar. Verifica que la API esté activa.";
+  }
+}
 
-    function descargarCatálogoCSV() {
-        window.location.href = "http://localhost:8000/exportar_csv";
-    }
+function renderResultados(items){
+  const cont = $("resultados");
+  if(!items.length){
+    $("estado").style.display="block";
+    $("estado").textContent = "No se encontraron repuestos para estos criterios.";
+    return;
+  }
+  $("estado").style.display="none";
+  cont.innerHTML = items.map(p=>{
+    const imgTag = p.imagen_url ? `<img src="${p.imagen_url}" alt="" onerror="this.parentNode.classList.add('ph-img');this.remove()"/>` : `<div class="ph-img" style="width:100%;height:100%"></div>`;
+    const compat = (p.compatibilidades||[]).map(c=>`<tr><td>${c.marca} ${c.modelo||""}</td><td class="rango">${c.desde?(c.desde===c.hasta?c.desde:c.desde+"-"+c.hasta):"—"}</td></tr>`).join("");
+    const codes = [];
+    if(p.codigo_oe) codes.push(`<div>OE: <b>${p.codigo_oe}</b></div>`);
+    if(p.codigo_oem) codes.push(`<div>OEM: <b>${p.codigo_oem}</b></div>`);
+    if(p.codigo_aftermarket) codes.push(`<div>Aftermarket: <b>${p.codigo_aftermarket}</b></div>`);
+    return `<div class="card">
+      <div class="img">${imgTag}</div>
+      <div class="body">
+        <h3>${p.descripcion||"Repuesto"}</h3>
+        <div class="chips">
+          ${p.marca?`<span class="chip">${p.marca}</span>`:""}
+          ${p.calidad?`<span class="chip q">${p.calidad}</span>`:""}
+          ${p.categoria?`<span class="chip">${p.categoria}</span>`:""}
+        </div>
+        <div class="codes">${codes.join("")||"<div>Sin códigos</div>"}</div>
+        <div class="price">${money(p.precio)} <small>Precio B2B (margen incluido)</small></div>
+        <div class="compat">
+          <div class="t">Compatibilidades</div>
+          <table>${compat||"<tr><td>General para la marca</td><td></td></tr>"}</table>
+        </div>
+        <button class="add" onclick="agregarCarrito(${p.id})">Añadir al carrito</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+/* ---------- Carrito ---------- */
+async function agregarCarrito(id){
+  if(!token){ abrir("ovCuenta"); return; }
+  try{
+    const r = await fetch(API+"/carrito/agregar",{method:"POST",headers:headers(true),body:JSON.stringify({autoparte_id:id,cantidad:1})});
+    if(r.status===401){ token=null; abrir("ovCuenta"); return; }
+    const d = await r.json();
+    actualizarContador(d);
+  }catch(e){}
+}
+function actualizarContador(cart){
+  const n = cart.cantidad_items||0;
+  const c = $("cartCount");
+  c.style.display = n>0?"flex":"none";
+  c.textContent = n;
+}
+async function verCarrito(){
+  if(!token){ abrir("ovCuenta"); return; }
+  const r = await fetch(API+"/carrito/ver",{headers:headers(true)});
+  if(r.status===401){ token=null; abrir("ovCuenta"); return; }
+  const d = await r.json();
+  actualizarContador(d);
+  $("cartItems").innerHTML = (d.items||[]).map(it=>`
+    <div class="cart-item">
+      ${it.imagen_url ? `<img src="${it.imagen_url}" alt="" onerror="this.style.visibility='hidden'"/>` : `<div class="ph-img" style="width:56px;height:56px"></div>`}
+      <div class="info"><b>${it.descripcion||''}</b><br/>${it.codigo_oe||''} · ${money(it.precio_unitario)}</div>
+      <div class="qty">
+        <button onclick="cambiarQty(${it.autoparte_id},${it.cantidad-1})">−</button>
+        <span>${it.cantidad}</span>
+        <button onclick="cambiarQty(${it.autoparte_id},${it.cantidad+1})">+</button>
+      </div>
+      <div style="text-align:right"><b>${money(it.subtotal)}</b><br/><button class="link-del" onclick="eliminarItem(${it.autoparte_id})">Quitar</button></div>
+    </div>`).join("") || "<p style='text-align:center;color:#7a8494;padding:20px'>Tu carrito está vacío.</p>";
+  $("cartTotal").textContent = money(d.total);
+  abrir("ovCarrito");
+}
+async function cambiarQty(id,cant){
+  const r = await fetch(API+"/carrito/actualizar",{method:"PUT",headers:headers(true),body:JSON.stringify({autoparte_id:id,cantidad:Math.max(0,cant)})});
+  const d = await r.json(); actualizarContador(d); verCarrito();
+}
+async function eliminarItem(id){
+  const r = await fetch(API+"/carrito/eliminar/"+id,{method:"DELETE",headers:headers(true)});
+  const d = await r.json(); actualizarContador(d); verCarrito();
+}
+async function checkout(){
+  const r = await fetch(API+"/ordenes/crear",{method:"POST",headers:headers(true)});
+  if(r.ok){
+    const d = await r.json();
+    cerrar("ovCarrito");
+    actualizarContador({cantidad_items:0});
+    alert("✅ Orden #"+d.id+" creada en estado '"+d.estado+"'. Total: "+money(d.total));
+    verOrdenes();
+  }else{
+    const e = await r.json(); alert("No se pudo crear la orden: "+(e.detail||""));
+  }
+}
+
+/* ---------- Órdenes ---------- */
+async function verOrdenes(){
+  if(!token){ abrir("ovCuenta"); return; }
+  const r = await fetch(API+"/ordenes/listar",{headers:headers(true)});
+  const d = await r.json();
+  $("ordenesBody").innerHTML = (d.ordenes||[]).map(o=>`
+    <div class="orden-row">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <b>Orden #${o.id}</b> <span class="estado-badge">${o.estado}</span>
+      </div>
+      <div style="color:#5b6472;margin-top:4px">${new Date(o.fecha_creacion).toLocaleString()} · ${o.cantidad_items} ítem(s) · Total ${money(o.total)}</div>
+    </div>`).join("") || "<p style='text-align:center;color:#7a8494;padding:20px'>Aún no tienes órdenes.</p>";
+  abrir("ovOrdenes");
+}
+
+/* ---------- Auth UI ---------- */
+let modoAuth = "login";
+function setModoAuth(m){
+  modoAuth = m;
+  $("tabLogin").classList.toggle("active", m==="login");
+  $("tabRegistro").classList.toggle("active", m==="registro");
+  $("fldNombre").style.display = m==="registro" ? "block":"none";
+  $("btnAuth").textContent = m==="login" ? "Ingresar":"Crear cuenta";
+  $("tituloCuenta").textContent = m==="login" ? "Acceder a tu cuenta":"Crear cuenta B2B";
+  $("msgCuenta").className="msg";
+}
+async function enviarAuth(){
+  const email = $("inEmail").value.trim();
+  const password = $("inPass").value;
+  const nombre = $("inNombre").value.trim();
+  const msg = $("msgCuenta");
+  if(!email||!password){ msg.className="msg err"; msg.textContent="Completa email y contraseña."; return; }
+  const url = modoAuth==="login" ? "/auth/login" : "/auth/registro";
+  const body = modoAuth==="login" ? {email,password} : {email,password,nombre};
+  try{
+    const r = await fetch(API+url,{method:"POST",headers:headers(),body:JSON.stringify(body)});
+    const d = await r.json();
+    if(!r.ok){ msg.className="msg err"; msg.textContent = d.detail || "Error de autenticación."; return; }
+    token = d.access_token; usuario = d.usuario;
+    localStorage.setItem("fch_token",token);
+    localStorage.setItem("fch_user",JSON.stringify(usuario));
+    refreshCuenta();
+    cerrar("ovCuenta");
+  }catch(e){ msg.className="msg err"; msg.textContent="No se pudo conectar con la API."; }
+}
+function cerrarSesion(){
+  token=null; usuario=null;
+  localStorage.removeItem("fch_token"); localStorage.removeItem("fch_user");
+  refreshCuenta(); actualizarContador({cantidad_items:0});
+}
+
+/* ---------- Utilidades modal ---------- */
+function abrir(id){ $(id).classList.add("open"); }
+function cerrar(id){ $(id).classList.remove("open"); }
+
+/* ---------- Eventos ---------- */
+$("formBusqueda").addEventListener("submit",(e)=>{e.preventDefault();buscar();});
+$("inputBusqueda").addEventListener("input",debounceBuscar);
+$("btnFiltrar").addEventListener("click",buscar);
+$("selMarca").addEventListener("change",(e)=>{cargarModelos(e.target.value);});
+$("btnCarrito").addEventListener("click",verCarrito);
+$("btnOrdenes").addEventListener("click",verOrdenes);
+$("btnCheckout").addEventListener("click",checkout);
+$("btnCuenta").addEventListener("click",()=>{ if(usuario){ if(confirm("¿Cerrar sesión?")) cerrarSesion(); } else { setModoAuth("login"); abrir("ovCuenta"); } });
+$("tabLogin").addEventListener("click",()=>setModoAuth("login"));
+$("tabRegistro").addEventListener("click",()=>setModoAuth("registro"));
+$("btnAuth").addEventListener("click",enviarAuth);
+document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>cerrar(b.dataset.close)));
+document.querySelectorAll(".overlay").forEach(o=>o.addEventListener("click",(e)=>{ if(e.target===o) cerrar(o.id); }));
+
+/* ---------- Init ---------- */
+$("anio").textContent = new Date().getFullYear();
+refreshCuenta();
+cargarMarcas();
+if(token){ fetch(API+"/carrito/ver",{headers:headers(true)}).then(r=>r.ok?r.json():null).then(d=>{if(d)actualizarContador(d);}).catch(()=>{}); }
 </script>
 </body>
 </html>

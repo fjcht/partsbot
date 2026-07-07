@@ -1,0 +1,111 @@
+"""
+Endpoint de IA para completar datos de marcas (típicamente chinas) que en
+CassChoice sólo traen la marca sin modelos ni años.
+
+Usa Google Gemini si ``GEMINI_API_KEY`` está configurada; de lo contrario
+devuelve una respuesta informativa sin fallar.
+"""
+import json
+import logging
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+import models
+import database
+import schemas
+import security
+from config import settings
+
+logger = logging.getLogger("partsbot.ia")
+
+router = APIRouter(prefix="/ia", tags=["IA"])
+
+
+def _inferir_con_gemini(marca: str) -> list:
+    """Devuelve una lista de dicts {modelo, anio_inicio, anio_fin} para la marca."""
+    if not settings.gemini_api_key:
+        return []
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=settings.gemini_api_key)
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        prompt = (
+            f"Lista los modelos de vehículos más comunes de la marca '{marca}' "
+            f"con su rango de años de producción. Responde SOLO con JSON válido "
+            f'con esta forma: [{{"modelo": "X", "anio_inicio": 2015, "anio_fin": 2023}}]. '
+            f"Máximo 15 modelos."
+        )
+        resp = model.generate_content(prompt)
+        texto = resp.text.strip()
+        # Extraer el bloque JSON.
+        inicio = texto.find("[")
+        fin = texto.rfind("]")
+        if inicio >= 0 and fin > inicio:
+            return json.loads(texto[inicio : fin + 1])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gemini no disponible o falló para %s: %s", marca, exc)
+    return []
+
+
+@router.post("/completar_datos")
+def completar_datos(
+    payload: schemas.CompletarDatosRequest,
+    db: Session = Depends(database.get_db),
+    usuario: models.Usuario = Depends(security.get_current_user),
+):
+    """
+    Completa modelos/años para vehículos marcados con ``necesita_completar``.
+    Requiere autenticación (idealmente un usuario ADMIN).
+    """
+    query = db.query(models.CatalogoVehiculos).filter(
+        models.CatalogoVehiculos.necesita_completar.is_(True)
+    )
+    if payload.vehiculo_id:
+        query = query.filter(models.CatalogoVehiculos.id == payload.vehiculo_id)
+
+    pendientes = query.limit(payload.limite).all()
+
+    if not settings.gemini_api_key:
+        return {
+            "status": "sin_ia",
+            "detalle": (
+                "GEMINI_API_KEY no configurada. Configúrala en .env para completar "
+                "automáticamente modelos/años de marcas chinas."
+            ),
+            "pendientes": [{"id": v.id, "marca": v.marca} for v in pendientes],
+        }
+
+    completados = []
+    for veh in pendientes:
+        modelos = _inferir_con_gemini(veh.marca)
+        creados = 0
+        for m in modelos:
+            modelo = (m.get("modelo") or "").strip()
+            if not modelo:
+                continue
+            ai = m.get("anio_inicio")
+            af = m.get("anio_fin") or ai
+            anios = range(int(ai), int(af) + 1) if ai else [None]
+            for anio in anios:
+                existe = (
+                    db.query(models.CatalogoVehiculos)
+                    .filter_by(marca=veh.marca, modelo=modelo, anio=anio)
+                    .first()
+                )
+                if not existe:
+                    db.add(
+                        models.CatalogoVehiculos(
+                            marca=veh.marca,
+                            modelo=modelo,
+                            anio=anio,
+                            necesita_completar=False,
+                        )
+                    )
+                    creados += 1
+        veh.necesita_completar = False  # ya procesado
+        completados.append({"marca": veh.marca, "modelos_creados": creados})
+        db.commit()
+
+    return {"status": "ok", "procesados": len(completados), "detalle": completados}
