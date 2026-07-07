@@ -50,9 +50,14 @@ def compatibilidades_agrupadas(compatibilidades) -> List[Dict]:
     los años en rangos legibles.
     """
     por_vehiculo: Dict[tuple, List[Optional[int]]] = {}
+    origen_por_vehiculo: Dict[tuple, str] = {}
     for c in compatibilidades:
         clave = (c.marca_vehiculo or "", c.modelo_vehiculo or "")
         por_vehiculo.setdefault(clave, [])
+        # Registrar el origen del dato (si alguno es de IA, se marca como "ia").
+        origen = getattr(c, "origen", None) or "casschoice"
+        if origen_por_vehiculo.get(clave) != "ia":
+            origen_por_vehiculo[clave] = origen
         # Expandir el rango almacenado (anio_inicio..anio_fin) a años.
         if c.anio_inicio and c.anio_fin:
             por_vehiculo[clave].extend(range(c.anio_inicio, c.anio_fin + 1))
@@ -61,6 +66,8 @@ def compatibilidades_agrupadas(compatibilidades) -> List[Dict]:
 
     resultado = []
     for (marca, modelo), anios in sorted(por_vehiculo.items()):
+        origen = origen_por_vehiculo.get((marca, modelo), "casschoice")
+        estimado = origen == "ia"
         rangos = agrupar_anios(anios)
         if not rangos:
             resultado.append(
@@ -69,6 +76,8 @@ def compatibilidades_agrupadas(compatibilidades) -> List[Dict]:
                     "modelo": modelo,
                     "anios": [],
                     "etiqueta": f"{marca} {modelo}".strip(),
+                    "origen": origen,
+                    "estimado_ia": estimado,
                 }
             )
         else:
@@ -80,6 +89,8 @@ def compatibilidades_agrupadas(compatibilidades) -> List[Dict]:
                         "desde": r["desde"],
                         "hasta": r["hasta"],
                         "etiqueta": formatear_rango(marca, modelo, r),
+                        "origen": origen,
+                        "estimado_ia": estimado,
                     }
                 )
     return resultado

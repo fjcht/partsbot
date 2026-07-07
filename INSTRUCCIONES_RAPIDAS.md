@@ -181,6 +181,38 @@ El sistema usará automáticamente las credenciales de `.env` para hacer login.
 
 ---
 
+## 🤖 Marcas chinas: compatibilidades con IA
+
+**El problema:** CassChoice **no entrega modelos ni años** (`vehicle_details` viene vacío) para la mayoría de las marcas chinas (CHERY, JETOUR, CHANGAN, GEELY, HAVAL, MG, BYD…). Por eso, al sincronizar una pieza china como `F4J16-3705110AB`, salían **0 compatibilidades**. No es un error del código: es una limitación del proveedor.
+
+**La solución:** el sistema usa **IA** para inferir el fitment (modelo + rango de años) a partir del número de parte, la marca y la descripción. Las compatibilidades inferidas se guardan con `origen="ia"` y se muestran en el catálogo con una etiqueta **`IA`** (badge verde) y la nota *"· estimadas por IA"** para que se distingan de las oficiales.
+
+### Cómo activarla en tu máquina local
+1. Consigue una API key gratuita de Google Gemini en https://aistudio.google.com/app/apikey
+2. Agrégala a tu archivo `.env`:
+   ```
+   GEMINI_API_KEY=tu_api_key_aqui
+   ```
+3. ¡Listo! A partir de ahí, cada vez que sincronices una pieza china sin fitment, la IA lo completa automáticamente.
+
+### Uso
+- **Automático al sincronizar**: si una pieza queda con 0 compatibilidades, la IA las infiere sola.
+  ```bash
+  python sincronizador.py --piezas F4J16-3705110AB
+  # (usa --sin-ia para desactivar la inferencia por IA)
+  ```
+- **Completar piezas ya cargadas** (endpoint autenticado):
+  ```
+  POST /ia/completar_fitment          -> procesa las piezas SIN compatibilidades
+  POST /ia/completar_fitment {"autoparte_id": 1}   -> una pieza concreta
+  ```
+
+> Si no configuras `GEMINI_API_KEY`, el sistema sigue funcionando normalmente; simplemente no rellena las compatibilidades de las marcas chinas (las deja vacías en lugar de fallar).
+
+**Prueba real:** la pieza CHERY `F4J16-3705110AB` pasó de **0 → 5-8 compatibilidades** (Arrizo 5/6, Tiggo 4/7/8, y modelos JETOUR que comparten plataforma).
+
+---
+
 ## 📝 Notas Importantes
 
 1. **Localhost del Agente**: Este código corre en la VM del agente Abacus AI. Para ejecutarlo en tu máquina local, descarga los archivos usando el botón **"Files"** en la esquina superior derecha.

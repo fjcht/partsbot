@@ -53,6 +53,8 @@ class CatalogoVehiculos(Base):
     # True cuando la marca (típicamente china) no trae modelo/año y debe
     # completarse con ayuda de IA.
     necesita_completar = Column(Boolean, default=False, index=True)
+    # Fuente del dato: "casschoice" (API) o "ia" (inferido por IA).
+    origen = Column(String, default="casschoice", index=True)
 
     __table_args__ = (
         UniqueConstraint("marca", "modelo", "anio", name="uq_vehiculo_marca_modelo_anio"),
@@ -111,6 +113,8 @@ class Compatibilidad(Base):
     modelo_vehiculo = Column(String, index=True)
     anio_inicio = Column(Integer)
     anio_fin = Column(Integer)
+    # Fuente del dato: "casschoice" (vehicle_details) o "ia" (inferido).
+    origen = Column(String, default="casschoice", index=True)
 
     autoparte = relationship("Autoparte", back_populates="compatibilidades")
 

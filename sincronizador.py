@@ -289,7 +289,7 @@ def _crear_compatibilidades_desde_producto(db, autoparte: models.Autoparte, prod
     return creadas
 
 
-def _procesar_resultado_parte(db, entry: dict) -> Optional[models.Autoparte]:
+def _procesar_resultado_parte(db, entry: dict, usar_ia: bool = True) -> Optional[models.Autoparte]:
     """Procesa una entrada de ``results`` (un número de parte con sus productos)."""
     parts_number = entry.get("parts_number")
     productos = entry.get("products", []) or []
@@ -381,15 +381,106 @@ def _procesar_resultado_parte(db, entry: dict) -> Optional[models.Autoparte]:
             break  # con un producto que tenga detalles es suficiente
     db.commit()
 
+    # --- IA: si CassChoice no entregó fitment (típico en marcas chinas), inferirlo ---
+    origen_compat = "casschoice"
+    if total_compat == 0 and usar_ia:
+        total_compat = _inferir_compatibilidades_con_ia(db, autoparte, productos)
+        if total_compat:
+            origen_compat = "ia"
+
     logger.info(
-        "Pieza '%s' (%s) -> %d precio(s), %d compatibilidad(es). Precio venta: %s",
+        "Pieza '%s' (%s) -> %d precio(s), %d compatibilidad(es) [%s]. Precio venta: %s",
         parts_number,
         marca_repuesto,
         len(autoparte.precios),
         total_compat,
+        origen_compat,
         autoparte.precio_venta_calculado,
     )
     return autoparte
+
+
+def _inferir_compatibilidades_con_ia(db, autoparte: models.Autoparte, productos: list) -> int:
+    """
+    Usa IA para inferir el fitment de una pieza sin ``vehicle_details``.
+    Crea las compatibilidades y ENRIQUECE el catálogo de vehículos con los
+    modelos/años descubiertos (marcando la marca como ya completada).
+    """
+    try:
+        import ia_service
+    except Exception:  # noqa: BLE001
+        return 0
+    if not ia_service.hay_ia_disponible():
+        return 0
+
+    # Reunir todas las marcas reales del proveedor (sin sufijos _OEM/_AM).
+    marcas = set()
+    for prod in productos:
+        bn = (prod.get("brand_name") or "").upper()
+        bn = bn.replace("_OEM", "").replace("_AM", "").replace("_AFTERMARKET", "").strip()
+        if bn:
+            marcas.add(bn)
+
+    fitment = ia_service.inferir_fitment(
+        numero_parte=autoparte.numero_oem,
+        marcas=sorted(marcas),
+        descripcion=autoparte.descripcion or "",
+    )
+    if not fitment:
+        return 0
+
+    existentes = {
+        (c.marca_vehiculo, c.modelo_vehiculo, c.anio_inicio, c.anio_fin)
+        for c in autoparte.compatibilidades
+    }
+    creadas = 0
+    for f in fitment:
+        marca, modelo = f["marca"], f["modelo"]
+        ai, af = f["anio_inicio"], f["anio_fin"]
+        clave = (marca, modelo, ai, af)
+        if clave in existentes:
+            continue
+        db.add(
+            models.Compatibilidad(
+                autoparte_id=autoparte.id,
+                marca_vehiculo=marca,
+                modelo_vehiculo=modelo,
+                anio_inicio=ai,
+                anio_fin=af,
+                origen="ia",
+            )
+        )
+        existentes.add(clave)
+        creadas += 1
+        # Enriquecer el catálogo de vehículos (año por año) para esta marca.
+        _enriquecer_catalogo(db, marca, modelo, ai, af)
+    db.commit()
+    return creadas
+
+
+def _enriquecer_catalogo(db, marca: str, modelo: str, anio_ini, anio_fin):
+    """Inserta en catalogo_vehiculos los modelos/años inferidos (idempotente)."""
+    anios = (
+        range(anio_ini, anio_fin + 1)
+        if (anio_ini and anio_fin)
+        else [anio_ini]
+    )
+    for anio in anios:
+        existe = (
+            db.query(models.CatalogoVehiculos)
+            .filter_by(marca=marca, modelo=modelo, anio=anio)
+            .first()
+        )
+        if not existe:
+            db.add(
+                models.CatalogoVehiculos(
+                    marca=marca,
+                    modelo=modelo,
+                    anio=anio,
+                    necesita_completar=False,
+                    origen="ia",
+                )
+            )
 
 
 def _leer_parts_de_archivo(ruta: str) -> List[str]:
@@ -410,6 +501,7 @@ def sincronizar_piezas(
     client: CassChoiceClient,
     parts_numbers: List[str],
     lote: int = 20,
+    usar_ia: bool = True,
 ) -> int:
     logger.info("=== FASE B: Sincronización de piezas (query_commodity) ===")
     if not parts_numbers:
@@ -426,7 +518,7 @@ def sincronizar_piezas(
             continue
         for entry in resultados:
             try:
-                if _procesar_resultado_parte(db, entry):
+                if _procesar_resultado_parte(db, entry, usar_ia=usar_ia):
                     procesadas += 1
             except Exception as exc:  # noqa: BLE001
                 db.rollback()
@@ -448,6 +540,11 @@ def main():
         default="seed_parts.txt",
         help="Archivo con números de parte (uno por línea)",
     )
+    parser.add_argument(
+        "--sin-ia",
+        action="store_true",
+        help="Desactiva la inferencia de fitment con IA para piezas sin vehicle_details",
+    )
     args = parser.parse_args()
 
     # Asegurar que las tablas existen.
@@ -464,7 +561,7 @@ def main():
 
         if hacer_piezas:
             numeros = args.piezas or _leer_parts_de_archivo(args.archivo_piezas)
-            sincronizar_piezas(db, client, numeros)
+            sincronizar_piezas(db, client, numeros, usar_ia=not args.sin_ia)
     finally:
         db.close()
     logger.info("Sincronización finalizada.")

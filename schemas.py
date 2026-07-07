@@ -59,6 +59,13 @@ class CompletarDatosRequest(BaseModel):
     limite: int = 10
 
 
+class CompletarFitmentRequest(BaseModel):
+    # Si se pasa autoparte_id se completa esa pieza; si no, se procesan las
+    # primeras ``limite`` piezas SIN compatibilidades (típicas de marcas chinas).
+    autoparte_id: Optional[int] = None
+    limite: int = 10
+
+
 # --- Sincronización manual ---
 class CatalogoRequest(BaseModel):
     items: list

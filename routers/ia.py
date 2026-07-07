@@ -109,3 +109,106 @@ def completar_datos(
         db.commit()
 
     return {"status": "ok", "procesados": len(completados), "detalle": completados}
+
+
+@router.post("/completar_fitment")
+def completar_fitment(
+    payload: schemas.CompletarFitmentRequest,
+    db: Session = Depends(database.get_db),
+    usuario: models.Usuario = Depends(security.get_current_user),
+):
+    """
+    Completa con IA las compatibilidades (modelo/año) de las piezas que quedaron
+    SIN compatibilidades porque CassChoice devolvió ``vehicle_details: []``
+    (caso típico de marcas chinas: CHERY, JETOUR, CHANGAN, GEELY, etc.).
+
+    Para cada pieza infiere el fitment a partir del número de parte, la marca y
+    la descripción, crea las ``Compatibilidad`` con ``origen='ia'`` y enriquece
+    el catálogo de vehículos. Requiere autenticación.
+    """
+    import ia_service
+
+    # Piezas sin ninguna compatibilidad registrada.
+    query = db.query(models.Autoparte)
+    if payload.autoparte_id:
+        query = query.filter(models.Autoparte.id == payload.autoparte_id)
+    else:
+        query = query.filter(~models.Autoparte.compatibilidades.any())
+
+    piezas = query.limit(payload.limite).all()
+
+    if not ia_service.hay_ia_disponible():
+        return {
+            "status": "sin_ia",
+            "detalle": (
+                "No hay proveedor de IA configurado. Configura GEMINI_API_KEY en "
+                "tu archivo .env para inferir automáticamente las compatibilidades "
+                "de las marcas chinas."
+            ),
+            "pendientes": [
+                {"id": p.id, "numero_oem": p.numero_oem, "marca": p.marca}
+                for p in piezas
+            ],
+        }
+
+    resultados = []
+    for pieza in piezas:
+        marcas = [m for m in [pieza.marca] if m]
+        fitment = ia_service.inferir_fitment(
+            numero_parte=pieza.numero_oem or pieza.codigo_oem or "",
+            marcas=marcas,
+            descripcion=pieza.descripcion or "",
+        )
+        creadas = 0
+        existentes = {
+            (c.marca_vehiculo, c.modelo_vehiculo, c.anio_inicio, c.anio_fin)
+            for c in pieza.compatibilidades
+        }
+        for f in fitment:
+            clave = (f["marca"], f["modelo"], f["anio_inicio"], f["anio_fin"])
+            if clave in existentes:
+                continue
+            db.add(
+                models.Compatibilidad(
+                    autoparte_id=pieza.id,
+                    marca_vehiculo=f["marca"],
+                    modelo_vehiculo=f["modelo"],
+                    anio_inicio=f["anio_inicio"],
+                    anio_fin=f["anio_fin"],
+                    origen="ia",
+                )
+            )
+            existentes.add(clave)
+            creadas += 1
+            _enriquecer_catalogo(db, f["marca"], f["modelo"], f["anio_inicio"], f["anio_fin"])
+        db.commit()
+        resultados.append(
+            {
+                "autoparte_id": pieza.id,
+                "numero_oem": pieza.numero_oem,
+                "compatibilidades_creadas": creadas,
+            }
+        )
+
+    return {"status": "ok", "procesados": len(resultados), "detalle": resultados}
+
+
+def _enriquecer_catalogo(db, marca: str, modelo: str, anio_ini, anio_fin):
+    """Inserta en catalogo_vehiculos los modelos/años inferidos (idempotente)."""
+    anios = range(anio_ini, anio_fin + 1) if (anio_ini and anio_fin) else [anio_ini]
+    for anio in anios:
+        existe = (
+            db.query(models.CatalogoVehiculos)
+            .filter_by(marca=marca, modelo=modelo, anio=anio)
+            .first()
+        )
+        if not existe:
+            db.add(
+                models.CatalogoVehiculos(
+                    marca=marca,
+                    modelo=modelo,
+                    anio=anio,
+                    necesita_completar=False,
+                    origen="ia",
+                )
+            )
