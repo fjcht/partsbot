@@ -1,7 +1,15 @@
+# ==========================================================================
+# IMPORTANTE: usa Python 3.12 (recomendado). Python 3.13/3.14 aún no tienen
+# ruedas (wheels) precompiladas de varias librerías y pip intenta compilarlas
+# desde cero, lo que falla si no tienes Rust + Visual Studio Build Tools.
+# ==========================================================================
 fastapi==0.111.0
 uvicorn[standard]==0.30.1
 sqlalchemy==2.0.31
-psycopg2-binary==2.9.9
+# psycopg2-binary SÓLO es necesario para PostgreSQL (producción/Docker).
+# En local se usa SQLite, así que está comentado para evitar errores de
+# compilación. Si vas a usar PostgreSQL, descoméntalo:
+# psycopg2-binary==2.9.9
 httpx==0.27.0
 requests==2.32.3
 python-dotenv==1.0.1
