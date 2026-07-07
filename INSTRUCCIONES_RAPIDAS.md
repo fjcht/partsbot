@@ -1,5 +1,39 @@
 # 🚀 Instrucciones Rápidas — FCH AutoLab PartsBot
 
+## ⚡ Instalación en 1 solo paso (recomendado)
+
+Ya no tienes que ejecutar todo a mano. Hay un script que hace **TODO**
+(entorno virtual, dependencias, base de datos, catálogo, marcas chinas con IA
+y piezas):
+
+**Windows:**
+```cmd
+setup.bat
+```
+
+**Linux / macOS:**
+```bash
+bash setup.sh
+```
+
+El script te pedirá completar el `.env` (credenciales CassChoice + `GEMINI_API_KEY`)
+y luego hace el resto solo. Al terminar puedes arrancar el servidor con
+`iniciar_servidor.bat` (Windows) o `python -m uvicorn main:app --reload`.
+
+> 🔑 Necesitas una `GEMINI_API_KEY` gratuita (https://aistudio.google.com/app/apikey)
+> para que se completen las marcas chinas con IA.
+
+### Comandos de IA por separado (si prefieres control manual)
+```bash
+# Poblar TODAS las marcas chinas (modelos + años) en el catálogo de vehículos
+python sincronizador.py --completar-marcas
+
+# Completar las compatibilidades (fitment) de piezas ya cargadas sin modelo
+python sincronizador.py --completar-fitment
+```
+
+---
+
 ## ✅ Cambios Implementados (Última actualización)
 
 ### 🎨 1. Paleta de Marca FCH AutoLab

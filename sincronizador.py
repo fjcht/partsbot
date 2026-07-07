@@ -615,6 +615,86 @@ def completar_fitment_faltante(db, limite: Optional[int] = None) -> dict:
     return {"status": "ok", "piezas": len(pendientes), "compatibilidades_creadas": total_creadas, "detalle": detalle}
 
 
+def completar_marcas_faltantes(db, limite: Optional[int] = None) -> dict:
+    """
+    Puebla con IA el catálogo de vehículos para las marcas (típicamente chinas)
+    que CassChoice entregó SIN modelos ni años (``necesita_completar=True``).
+
+    Para cada marca infiere su lista de modelos + rango de años y crea las filas
+    correspondientes en ``catalogo_vehiculos`` (año por año), igual que las
+    marcas occidentales. Así aparecen en los desplegables de búsqueda aunque no
+    haya piezas cargadas todavía. No consulta CassChoice; sólo requiere IA.
+    """
+    try:
+        import ia_service
+    except Exception:  # noqa: BLE001
+        return {"status": "error", "detalle": "No se pudo cargar ia_service."}
+
+    if not ia_service.hay_ia_disponible():
+        return {
+            "status": "sin_ia",
+            "detalle": (
+                "No hay proveedor de IA. Configura GEMINI_API_KEY en tu .env "
+                "para poblar automáticamente los modelos/años de las marcas chinas."
+            ),
+        }
+
+    # Marcas pendientes (distintas) marcadas como necesita_completar.
+    marcas = [
+        m[0]
+        for m in db.query(models.CatalogoVehiculos.marca)
+        .filter(models.CatalogoVehiculos.necesita_completar.is_(True))
+        .distinct()
+        .all()
+    ]
+    if limite:
+        marcas = marcas[:limite]
+
+    logger.info("=== Completar marcas con IA: %d marca(s) pendiente(s) ===", len(marcas))
+    total_filas = 0
+    detalle = []
+    for marca in marcas:
+        modelos = ia_service.inferir_modelos_marca(marca)
+        creadas = 0
+        for m in modelos:
+            modelo = m["modelo"]
+            ai, af = m["anio_inicio"], m["anio_fin"]
+            anios = range(ai, af + 1) if (ai and af) else [ai]
+            for anio in anios:
+                existe = (
+                    db.query(models.CatalogoVehiculos)
+                    .filter_by(marca=marca, modelo=modelo, anio=anio)
+                    .first()
+                )
+                if not existe:
+                    db.add(
+                        models.CatalogoVehiculos(
+                            marca=marca,
+                            modelo=modelo,
+                            anio=anio,
+                            necesita_completar=False,
+                            origen="ia",
+                        )
+                    )
+                    creadas += 1
+        # Eliminar las filas "placeholder" (marca sin modelo/año) de esta marca,
+        # ya que ahora tenemos modelos concretos.
+        if modelos:
+            db.query(models.CatalogoVehiculos).filter(
+                models.CatalogoVehiculos.marca == marca,
+                models.CatalogoVehiculos.necesita_completar.is_(True),
+                (models.CatalogoVehiculos.modelo == "")
+                | (models.CatalogoVehiculos.modelo.is_(None)),
+            ).delete(synchronize_session=False)
+        db.commit()
+        total_filas += creadas
+        detalle.append({"marca": marca, "filas_creadas": creadas, "modelos": len(modelos)})
+        logger.info("  %s -> %d modelo(s), %d fila(s) creada(s)", marca, len(modelos), creadas)
+
+    logger.info("Completado: %d fila(s) en %d marca(s).", total_filas, len(marcas))
+    return {"status": "ok", "marcas": len(marcas), "filas_creadas": total_filas, "detalle": detalle}
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -642,10 +722,30 @@ def main():
             "CassChoice; sólo requiere GEMINI_API_KEY."
         ),
     )
+    parser.add_argument(
+        "--completar-marcas",
+        action="store_true",
+        help=(
+            "Puebla con IA el catálogo de vehículos de TODAS las marcas chinas "
+            "sin modelos/años (necesita_completar=True), igual que las marcas "
+            "occidentales. No consulta CassChoice; sólo requiere GEMINI_API_KEY."
+        ),
+    )
     args = parser.parse_args()
 
     # Asegurar que las tablas existen.
     models.Base.metadata.create_all(bind=database.engine)
+
+    # Modo offline: completar marcas (catálogo de vehículos) con IA.
+    if args.completar_marcas:
+        db = database.SessionLocal()
+        try:
+            resumen = completar_marcas_faltantes(db)
+            logger.info("Resultado: %s", resumen.get("status"))
+        finally:
+            db.close()
+        logger.info("Sincronización finalizada.")
+        return
 
     # Modo offline: completar fitment con IA sobre lo ya cargado (no toca CassChoice).
     if args.completar_fitment:

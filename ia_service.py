@@ -122,6 +122,43 @@ def _inferir_gemini(prompt: str) -> Optional[str]:
         return None
 
 
+def _construir_prompt_marca(marca: str) -> str:
+    return (
+        "Eres un experto en catálogos de vehículos, especialmente de marcas "
+        "chinas (CHERY, JETOUR, CHANGAN, GEELY, GREATWALL, HAVAL, MG, BYD, "
+        "DFSK, JAC, FOTON, MAXUS, BAIC, DONGFENG, etc.).\n\n"
+        f"Marca a analizar: {marca}\n\n"
+        "Tarea: lista los modelos de automóviles y camionetas de esta marca que "
+        "se han comercializado, con su rango de años de producción/venta. Sé "
+        "exhaustivo pero incluye SOLO modelos reales que existan.\n\n"
+        "Responde ÚNICAMENTE con JSON válido, sin texto adicional, con la forma:\n"
+        '[{"marca":"' + marca.upper() + '","modelo":"Tiggo 8","anio_inicio":2018,"anio_fin":2024}]\n'
+        "Máximo 25 modelos."
+    )
+
+
+def inferir_modelos_marca(marca: str) -> List[dict]:
+    """
+    Infiere el listado de modelos + rango de años de UNA marca completa.
+    Útil para poblar el catálogo de vehículos de marcas chinas que CassChoice
+    entrega sin modelos ni años.
+
+    Devuelve: [{"marca","modelo","anio_inicio","anio_fin"}, ...]
+    """
+    if not hay_ia_disponible():
+        return []
+    prompt = _construir_prompt_marca(marca)
+    texto = _inferir_gemini(prompt) or _inferir_abacus(prompt)
+    if not texto:
+        return []
+    modelos = _normalizar_fitment(_extraer_json_lista(texto))
+    # Forzar la marca solicitada (evita que la IA cambie el nombre).
+    for m in modelos:
+        m["marca"] = marca.upper()
+    logger.info("IA infirió %d modelo(s) para la marca %s.", len(modelos), marca)
+    return modelos
+
+
 def _inferir_abacus(prompt: str) -> Optional[str]:
     if not os.getenv("ABACUS_API_KEY"):
         return None
