@@ -381,11 +381,22 @@ def _procesar_resultado_parte(db, entry: dict, usar_ia: bool = True) -> Optional
             break  # con un producto que tenga detalles es suficiente
     db.commit()
 
-    # --- IA: si CassChoice no entregó fitment (típico en marcas chinas), inferirlo ---
+    # --- IA: si CassChoice no entregó fitment ÚTIL (con modelo), inferirlo ---
+    # Para marcas chinas, CassChoice suele devolver 0 detalles o, a lo sumo,
+    # compatibilidades "genéricas" sólo con la marca (sin modelo ni año). En
+    # ambos casos activamos la IA para obtener modelo + rango de años reales.
     origen_compat = "casschoice"
-    if total_compat == 0 and usar_ia:
-        total_compat = _inferir_compatibilidades_con_ia(db, autoparte, productos)
-        if total_compat:
+    utiles = [c for c in autoparte.compatibilidades if (c.modelo_vehiculo or "").strip()]
+    if not utiles and usar_ia:
+        # Descartar las compatibilidades genéricas (marca sin modelo) para no
+        # ensuciar el catálogo; la IA las reemplaza por fitment concreto.
+        for c in list(autoparte.compatibilidades):
+            if not (c.modelo_vehiculo or "").strip():
+                db.delete(c)
+        db.commit()
+        inferidas = _inferir_compatibilidades_con_ia(db, autoparte, productos)
+        if inferidas:
+            total_compat = inferidas
             origen_compat = "ia"
 
     logger.info(
@@ -527,6 +538,83 @@ def sincronizar_piezas(
     return procesadas
 
 
+def completar_fitment_faltante(db, limite: Optional[int] = None) -> dict:
+    """
+    Procesa DE UNA SOLA VEZ todas las piezas ya guardadas que quedaron sin
+    fitment útil (sin ningún modelo concreto), típicas de marcas chinas cuyo
+    proveedor no entrega modelos ni años. Usa la IA para inferir el fitment.
+
+    No consulta CassChoice: trabaja sobre lo que ya está en la base de datos,
+    así que sólo necesita ``GEMINI_API_KEY`` configurada. Devuelve un resumen.
+    """
+    try:
+        import ia_service
+    except Exception:  # noqa: BLE001
+        return {"status": "error", "detalle": "No se pudo cargar ia_service."}
+
+    if not ia_service.hay_ia_disponible():
+        return {
+            "status": "sin_ia",
+            "detalle": (
+                "No hay proveedor de IA. Configura GEMINI_API_KEY en tu .env "
+                "para completar automáticamente las marcas chinas."
+            ),
+        }
+
+    # Piezas cuyo conjunto de compatibilidades no tiene NINGÚN modelo concreto.
+    pendientes = []
+    for a in db.query(models.Autoparte).all():
+        if not any((c.modelo_vehiculo or "").strip() for c in a.compatibilidades):
+            pendientes.append(a)
+    if limite:
+        pendientes = pendientes[:limite]
+
+    logger.info("=== Completar fitment con IA: %d pieza(s) pendiente(s) ===", len(pendientes))
+    total_creadas = 0
+    detalle = []
+    for a in pendientes:
+        # Limpiar compatibilidades genéricas (marca sin modelo) previas.
+        for c in list(a.compatibilidades):
+            if not (c.modelo_vehiculo or "").strip():
+                db.delete(c)
+        db.commit()
+        marcas = [m for m in [a.marca] if m]
+        fitment = ia_service.inferir_fitment(
+            numero_parte=a.numero_oem or a.codigo_oem or a.codigo_oe or "",
+            marcas=marcas,
+            descripcion=a.descripcion or "",
+        )
+        existentes = {
+            (c.marca_vehiculo, c.modelo_vehiculo, c.anio_inicio, c.anio_fin)
+            for c in a.compatibilidades
+        }
+        creadas = 0
+        for f in fitment:
+            clave = (f["marca"], f["modelo"], f["anio_inicio"], f["anio_fin"])
+            if clave in existentes:
+                continue
+            db.add(
+                models.Compatibilidad(
+                    autoparte_id=a.id,
+                    marca_vehiculo=f["marca"],
+                    modelo_vehiculo=f["modelo"],
+                    anio_inicio=f["anio_inicio"],
+                    anio_fin=f["anio_fin"],
+                    origen="ia",
+                )
+            )
+            existentes.add(clave)
+            creadas += 1
+            _enriquecer_catalogo(db, f["marca"], f["modelo"], f["anio_inicio"], f["anio_fin"])
+        db.commit()
+        total_creadas += creadas
+        detalle.append({"numero": a.numero_oem, "marca": a.marca, "creadas": creadas})
+        logger.info("  %s (%s) -> %d compatibilidad(es) [ia]", a.numero_oem, a.marca, creadas)
+
+    logger.info("Completado: %d compatibilidad(es) creadas en %d pieza(s).", total_creadas, len(pendientes))
+    return {"status": "ok", "piezas": len(pendientes), "compatibilidades_creadas": total_creadas, "detalle": detalle}
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -545,10 +633,30 @@ def main():
         action="store_true",
         help="Desactiva la inferencia de fitment con IA para piezas sin vehicle_details",
     )
+    parser.add_argument(
+        "--completar-fitment",
+        action="store_true",
+        help=(
+            "Recorre TODAS las piezas ya guardadas sin fitment (marcas chinas) y "
+            "completa sus compatibilidades con IA de una sola vez. No consulta "
+            "CassChoice; sólo requiere GEMINI_API_KEY."
+        ),
+    )
     args = parser.parse_args()
 
     # Asegurar que las tablas existen.
     models.Base.metadata.create_all(bind=database.engine)
+
+    # Modo offline: completar fitment con IA sobre lo ya cargado (no toca CassChoice).
+    if args.completar_fitment:
+        db = database.SessionLocal()
+        try:
+            resumen = completar_fitment_faltante(db)
+            logger.info("Resultado: %s", resumen.get("status"))
+        finally:
+            db.close()
+        logger.info("Sincronización finalizada.")
+        return
 
     client = CassChoiceClient()
     db = database.SessionLocal()
