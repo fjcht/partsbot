@@ -1,13 +1,21 @@
 services:
   api:
     build: .
-    container_name: mi_nuevo_contenedor_api_001
+    container_name: partsbot_api
     restart: always
     ports:
       - "8000:8000"
     environment:
-      - IS_DOCKER=true  # <--- ESTO ES LO NUEVO
-      - DB_HOST=db
+      - DATABASE_URL=postgresql+psycopg2://postgres:admin123@db:5432/repuestos_db
+      - SECRET_KEY=${SECRET_KEY:-cambia-esto-en-produccion}
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440
+      - CASS_SID=${CASS_SID:-}
+      - CASS_TOKEN=${CASS_TOKEN:-}
+      - MARGEN_GANANCIA=0.06
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    env_file:
+      - .env
     volumes:
       - .:/app
     depends_on:
@@ -17,14 +25,19 @@ services:
 
   db:
     image: postgres:15-alpine
-    container_name: mi_nueva_db_001
+    container_name: partsbot_db
     restart: always
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: admin123
       POSTGRES_DB: repuestos_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     networks:
       - fch_network
+
+volumes:
+  pgdata:
 
 networks:
   fch_network:

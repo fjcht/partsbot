@@ -1,7 +1,12 @@
+import os
 import requests
 import json
 
-COOKIES = {"sid": "ddeea2c1454138a60d581c2577fd8809ac21a79b7e270abf7fe4a3b5"}
+from dotenv import load_dotenv
+
+load_dotenv()
+
+COOKIES = {"sid": os.getenv("CASS_SID", "")}
 CASS_URL = "https://merchant.casschoice.com/api/method/merchant_app.api.vehicle.VehicleRelationController.list_vehicle_relations"
 
 resp = requests.get(CASS_URL, cookies=COOKIES)

@@ -1,0 +1,4 @@
+# Lista semilla de números de parte para sincronizar desde CassChoice (query_commodity).
+# Un número de parte por línea. Las líneas que empiezan con '#' se ignoran.
+# Amplía esta lista con los números de parte que quieras cargar en el catálogo.
+F4J16-3705110AB

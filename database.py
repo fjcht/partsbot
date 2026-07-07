@@ -1,32 +1,51 @@
+"""
+Configuración de la base de datos (SQLAlchemy).
+
+La conexión se define mediante la variable de entorno ``DATABASE_URL``.
+
+- Producción / Docker: usar PostgreSQL, ej.
+  ``postgresql+psycopg2://postgres:admin123@db:5432/repuestos_db``
+- Desarrollo local sin PostgreSQL: si ``DATABASE_URL`` no está definida se
+  utiliza automáticamente un archivo SQLite (``partsbot.db``) para que el
+  proyecto arranque sin dependencias externas.
+
+Toda la configuración sensible se lee desde variables de entorno (ver
+``config.py`` y ``.env.example``).
+"""
 import os
+import logging
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# Lógica inteligente: 
-# Si existe la variable IS_DOCKER, usa 'db' (configuración de contenedor).
-# Si no, asume que estás en tu laptop y usa 'localhost'.
-if os.getenv("IS_DOCKER"):
-    DB_HOST = "db"
-else:
-    DB_HOST = "localhost"
+from config import settings
 
-# URL de conexión centralizada
-SQLALCHEMY_DATABASE_URL = f"postgresql://postgres:admin123@{DB_HOST}:5432/repuestos_db"
+logger = logging.getLogger("partsbot.database")
 
-print(f"DEBUG: Conectando a la base de datos en host: {DB_HOST}")
+SQLALCHEMY_DATABASE_URL = settings.database_url
 
-# Crear el motor de conexión
-# Se añade 'connect_args' para mayor compatibilidad en entornos locales si fuera necesario
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
+# SQLite necesita un argumento especial para permitir el uso en varios hilos
+# (FastAPI atiende peticiones en un pool de hilos).
+connect_args = {}
+if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
 
-# Configurar la sesión
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+logger.info("Conectando a la base de datos: %s", SQLALCHEMY_DATABASE_URL.split("@")[-1])
 
-# Declarar la base para los modelos
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args=connect_args,
+    pool_pre_ping=True,
+    future=True,
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
+
 Base = declarative_base()
 
-# Función necesaria para las dependencias en tus rutas de FastAPI
+
 def get_db():
+    """Dependencia de FastAPI que entrega una sesión de base de datos."""
     db = SessionLocal()
     try:
         yield db

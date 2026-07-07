@@ -1,2 +1,9 @@
 __pycache__/
 *.pyc
+.env
+*.db
+*.sqlite3
+resultado_raw.json
+reporte_precios.json
+.venv/
+venv/
