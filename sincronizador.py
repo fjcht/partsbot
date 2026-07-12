@@ -538,6 +538,141 @@ def sincronizar_piezas(
     return procesadas
 
 
+def sincronizar_total(
+    db,
+    client: CassChoiceClient,
+    limite_paginas: Optional[int] = None,
+    page_size: Optional[int] = None,
+    usar_ia: bool = True,
+) -> int:
+    """
+    Crawl MASIVO del catálogo de piezas de CassChoice, página por página,
+    usando ``total_pages`` / ``has_next``. Cada resultado de cada página se
+    procesa igual que en la sincronización por número de parte (crea/actualiza
+    la Autoparte, precios, códigos y compatibilidades; usa IA como fallback de
+    fitment para marcas chinas).
+
+    - ``limite_paginas``: máximo de páginas (ideal para pruebas, p.ej. 5).
+    - Resiliente: los reintentos con backoff viven en el cliente HTTP.
+    """
+    logger.info(
+        "=== SYNC TOTAL: crawl paginado de piezas (limite_paginas=%s, page_size=%s) ===",
+        limite_paginas or "todas", page_size or settings.cass_page_size,
+    )
+    procesadas = 0
+    paginas = 0
+    try:
+        for info in client.crawl_commodities(limite_paginas=limite_paginas, page_size=page_size):
+            paginas += 1
+            for entry in info["results"]:
+                # Cada entry debe tener parts_number + products. Si el endpoint
+                # de búsqueda entrega productos sueltos, los envolvemos.
+                if "products" not in entry and ("parts_number" in entry or "partsNumber" in entry):
+                    entry = {
+                        "parts_number": entry.get("parts_number") or entry.get("partsNumber"),
+                        "products": [entry],
+                    }
+                try:
+                    if _procesar_resultado_parte(db, entry, usar_ia=usar_ia):
+                        procesadas += 1
+                except Exception as exc:  # noqa: BLE001
+                    db.rollback()
+                    logger.exception(
+                        "Error procesando %s: %s", entry.get("parts_number"), exc
+                    )
+    except CassChoiceError as exc:
+        logger.error("Crawl interrumpido: %s", exc)
+
+    logger.info(
+        "SYNC TOTAL finalizado: %d pieza(s) procesada(s) en %d página(s).",
+        procesadas, paginas,
+    )
+    return procesadas
+
+
+def generar_reporte_publicables(db, ruta_csv: str = "publicables.csv") -> dict:
+    """
+    Identifica las piezas PUBLICABLES (listas para vender) y genera un CSV.
+
+    Una pieza es publicable si cumple las 3 condiciones de negocio:
+      1. Tiene descripción no vacía.
+      2. Tiene precio de venta en USD (> 0).
+      3. Tiene fitment COMPLETO: al menos una compatibilidad con modelo concreto
+         (marca + modelo; si además hay año, mejor).
+
+    El CSV queda listo para el equipo comercial: qué vender y a quién.
+    """
+    import csv
+
+    columnas = [
+        "numero_oem", "descripcion", "categoria", "marca", "calidad",
+        "codigo_oe", "codigo_oem", "codigo_aftermarket",
+        "precio_fob_usd", "precio_venta_usd", "moneda",
+        "vehiculos_compatibles", "n_compatibilidades", "origen_fitment",
+    ]
+
+    publicables = 0
+    no_publicables = 0
+    filas = []
+    for a in db.query(models.Autoparte).all():
+        tiene_desc = bool((a.descripcion or "").strip())
+        precio = a.precio_venta_calculado
+        tiene_precio = precio is not None and precio > 0
+        compat_utiles = [
+            c for c in a.compatibilidades if (c.modelo_vehiculo or "").strip()
+        ]
+        tiene_fitment = len(compat_utiles) > 0
+
+        if not (tiene_desc and tiene_precio and tiene_fitment):
+            no_publicables += 1
+            continue
+
+        publicables += 1
+        # Texto legible de vehículos compatibles.
+        vehiculos = []
+        for c in compat_utiles:
+            rango = ""
+            if c.anio_inicio and c.anio_fin and c.anio_inicio != c.anio_fin:
+                rango = f" {c.anio_inicio}-{c.anio_fin}"
+            elif c.anio_inicio:
+                rango = f" {c.anio_inicio}"
+            vehiculos.append(f"{c.marca_vehiculo} {c.modelo_vehiculo}{rango}".strip())
+        origen = "ia" if any(getattr(c, "origen", "") == "ia" for c in compat_utiles) else "casschoice"
+
+        filas.append({
+            "numero_oem": a.numero_oem or "",
+            "descripcion": a.descripcion or "",
+            "categoria": a.categoria or "",
+            "marca": a.marca or "",
+            "calidad": a.calidad or "",
+            "codigo_oe": a.codigo_oe or "",
+            "codigo_oem": a.codigo_oem or "",
+            "codigo_aftermarket": a.codigo_aftermarket or "",
+            "precio_fob_usd": a.precio_fob if a.precio_fob is not None else "",
+            "precio_venta_usd": precio,
+            "moneda": settings.moneda_precio,
+            "vehiculos_compatibles": " | ".join(vehiculos),
+            "n_compatibilidades": len(compat_utiles),
+            "origen_fitment": origen,
+        })
+
+    with open(ruta_csv, "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=columnas)
+        writer.writeheader()
+        writer.writerows(filas)
+
+    logger.info(
+        "Reporte de publicables generado: %s (%d publicables, %d descartadas).",
+        ruta_csv, publicables, no_publicables,
+    )
+    return {
+        "status": "ok",
+        "archivo": ruta_csv,
+        "publicables": publicables,
+        "no_publicables": no_publicables,
+    }
+
+
 def completar_fitment_faltante(db, limite: Optional[int] = None) -> dict:
     """
     Procesa DE UNA SOLA VEZ todas las piezas ya guardadas que quedaron sin
@@ -731,10 +866,72 @@ def main():
             "occidentales. No consulta CassChoice; sólo requiere GEMINI_API_KEY."
         ),
     )
+    parser.add_argument(
+        "--sync-total",
+        action="store_true",
+        help=(
+            "CRAWL MASIVO: recorre TODAS las páginas del catálogo de piezas de "
+            "CassChoice (query_commodity paginado) y las indexa en la DB. Combínalo "
+            "con --limit-pages para pruebas."
+        ),
+    )
+    parser.add_argument(
+        "--limit-pages",
+        type=int,
+        default=None,
+        help="Máximo de páginas a recorrer en --sync-total (p.ej. 5 para probar).",
+    )
+    parser.add_argument(
+        "--page-size",
+        type=int,
+        default=None,
+        help="Tamaño de página del crawl (por defecto CASS_PAGE_SIZE del .env).",
+    )
+    parser.add_argument(
+        "--reporte-publicables",
+        nargs="?",
+        const="publicables.csv",
+        default=None,
+        help=(
+            "Genera un CSV de piezas PUBLICABLES (con descripción, precio USD y "
+            "fitment completo), listo para vender. Ruta opcional (default: "
+            "publicables.csv)."
+        ),
+    )
     args = parser.parse_args()
 
     # Asegurar que las tablas existen.
     models.Base.metadata.create_all(bind=database.engine)
+
+    # Modo offline: reporte CSV de piezas publicables (no toca CassChoice).
+    if args.reporte_publicables:
+        db = database.SessionLocal()
+        try:
+            resumen = generar_reporte_publicables(db, args.reporte_publicables)
+            logger.info(
+                "Reporte: %s publicables=%d",
+                resumen.get("archivo"), resumen.get("publicables", 0),
+            )
+        finally:
+            db.close()
+        logger.info("Sincronización finalizada.")
+        return
+
+    # Crawl masivo paginado del catálogo de piezas.
+    if args.sync_total:
+        client = CassChoiceClient()
+        db = database.SessionLocal()
+        try:
+            sincronizar_total(
+                db, client,
+                limite_paginas=args.limit_pages,
+                page_size=args.page_size,
+                usar_ia=not args.sin_ia,
+            )
+        finally:
+            db.close()
+        logger.info("Sincronización finalizada.")
+        return
 
     # Modo offline: completar marcas (catálogo de vehículos) con IA.
     if args.completar_marcas:

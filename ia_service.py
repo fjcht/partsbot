@@ -214,3 +214,47 @@ def inferir_fitment(
         "IA infirió %d compatibilidad(es) para %s.", len(fitment), numero_parte
     )
     return fitment
+
+
+# ---------------------------------------------------------------------------
+# Interfaz orientada a objetos
+# ---------------------------------------------------------------------------
+class IAService:
+    """
+    Fachada orientada a objetos del servicio de IA.
+
+    Envuelve las funciones a nivel de módulo para quienes prefieren una
+    instancia (``ia = IAService(); ia.inferir_fitment(...)``). Esto asegura un
+    export de clase limpio y estable:
+
+        from ia_service import IAService
+
+    Es un envoltorio delgado y sin estado; puede instanciarse libremente.
+    """
+
+    def disponible(self) -> bool:
+        """True si hay al menos un proveedor de IA configurado."""
+        return hay_ia_disponible()
+
+    # Alias en español coherente con el resto del código.
+    hay_ia_disponible = staticmethod(hay_ia_disponible)
+
+    def inferir_fitment(
+        self, numero_parte: str, marcas: List[str], descripcion: str = ""
+    ) -> List[dict]:
+        return inferir_fitment(numero_parte, marcas, descripcion)
+
+    def inferir_modelos_marca(self, marca: str) -> List[dict]:
+        return inferir_modelos_marca(marca)
+
+
+# Instancia compartida lista para usar (opcional).
+ia_service = IAService()
+
+__all__ = [
+    "IAService",
+    "ia_service",
+    "inferir_fitment",
+    "inferir_modelos_marca",
+    "hay_ia_disponible",
+]

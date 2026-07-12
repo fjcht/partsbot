@@ -52,6 +52,32 @@ class Settings:
         "CASS_QUERY_COMMODITY_ENDPOINT",
         "/api/method/merchant_app.api.product.ProductController.query_commodity",
     )
+    # Endpoint de BÚSQUEDA/LISTADO paginado de piezas (crawl masivo).
+    # Por defecto se reutiliza query_commodity con parámetros de paginación;
+    # si CassChoice expone un endpoint de "search commodity" distinto, se puede
+    # sobrescribir con CASS_SEARCH_ENDPOINT en el .env.
+    cass_search_endpoint: str = _get(
+        "CASS_SEARCH_ENDPOINT",
+        "/api/method/merchant_app.api.product.ProductController.query_commodity",
+    )
+
+    # --- Crawl / paginación ---
+    # Tamaño de página para el crawl masivo.
+    cass_page_size: int = int(_get("CASS_PAGE_SIZE", "50"))
+    # Nombres de los parámetros de paginación en el BODY de la petición.
+    cass_param_page: str = _get("CASS_PARAM_PAGE", "page")
+    cass_param_page_size: str = _get("CASS_PARAM_PAGE_SIZE", "pageSize")
+    # Nombres de los campos de paginación en la RESPUESTA (se auto-detectan
+    # varios alias; estos son los preferidos).
+    cass_field_total: str = _get("CASS_FIELD_TOTAL", "total")
+    cass_field_total_pages: str = _get("CASS_FIELD_TOTAL_PAGES", "total_pages")
+    cass_field_has_next: str = _get("CASS_FIELD_HAS_NEXT", "has_next")
+    cass_field_results: str = _get("CASS_FIELD_RESULTS", "results")
+
+    # --- Resiliencia (reintentos con backoff exponencial) ---
+    cass_max_retries: int = int(_get("CASS_MAX_RETRIES", "4"))
+    cass_backoff_base: float = float(_get("CASS_BACKOFF_BASE", "1.5"))
+    cass_backoff_max: float = float(_get("CASS_BACKOFF_MAX", "30"))
 
     # --- Negocio ---
     # Margen aplicado sobre el precio FOB (6% => 0.06).
@@ -71,6 +97,10 @@ class Settings:
     @property
     def cass_query_commodity_url(self) -> str:
         return self.cass_base_url.rstrip("/") + self.cass_query_commodity_endpoint
+
+    @property
+    def cass_search_url(self) -> str:
+        return self.cass_base_url.rstrip("/") + self.cass_search_endpoint
 
 
 @lru_cache
