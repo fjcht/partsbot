@@ -49,6 +49,112 @@ def aplicar_margen(precio_fob: Optional[float]) -> Optional[float]:
     return round(precio_fob * (1 + settings.margen_ganancia), 4)
 
 
+def obtener_filtro_completo(db=None) -> dict:
+    """
+    Construye el filtro completo (brand + vehicle_relation_id_arr) requerido
+    por el endpoint query_commodity_by_category para el crawl masivo.
+
+    Si se pasa `db`, consulta las marcas únicas desde CatalogoVehiculos.
+    Si la BD está vacía o no se pasa `db`, retorna un fallback hardcoded con
+    ~400 marcas conocidas (OEM, AM, Aftermarket, etc.).
+
+    Este filtro se debe pasar como `filtro` a `crawl_commodities()` para que
+    se combine con {page, pageSize} en cada petición.
+    """
+    marcas = set()
+
+    if db is not None:
+        try:
+            # Extraer vehicle_relation_id únicos (marca base) de la BD.
+            for (vr,) in db.query(models.CatalogoVehiculos.vehicle_relation_id).distinct():
+                if vr:
+                    marcas.add(vr)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Error consultando BD para filtro, usando fallback: %s", exc)
+
+    # Si no obtuvimos marcas de la BD, usar fallback hardcoded (del curl real).
+    if not marcas:
+        marcas = {
+            "ACURA", "ALFAROMEO", "AUDI", "AVATR", "BAIC", "BAOJUN", "BEIJING",
+            "BEIJINGC", "BENTENG", "BENTLEY", "BENZ", "BMW", "BUICK", "BYD",
+            "CADILLAC", "CHANGAN", "CHANGHE", "CHERY", "CHEVROLET", "CHRYSLER",
+            "CITROEN", "DACIA", "DAEWOO", "DAIHATSU", "DF", "DFFS", "DFFX",
+            "DODGE", "EXEED", "FAW", "FAWAUDI", "FEIDIE", "FERRARI", "FIAT",
+            "FORD", "FOTON", "GACG", "GEELY", "GM", "GMC", "GWM", "HAFEI",
+            "HAIMA", "HANTENG", "HAVAL", "HONDA", "HONGQI", "HUMMER", "HYUNDAI",
+            "INFINITI", "ISUZU", "IVECO", "JAC", "JAGUAR", "JEEP", "JETOUR",
+            "JETTA", "JINBEI", "JMC", "KAIYI", "KARRY", "KIA", "LADA",
+            "LANDROVER", "LANDWIND", "LEADINGIDEAL", "LEOPAARD", "LEXUS",
+            "LIFAN", "LOTUS", "LYNKCO", "Li Auto", "MASERATI", "MAYBACH",
+            "MAZDA", "MAZDA_ CHANGAN", "MG", "MINI", "MITSUBISHI", "NISSAN",
+            "OMODA", "OPEL", "PERODUA", "PEUGEOT", "PONTIAC", "PORSCHE",
+            "PROTON", "QOROS", "RENAULT", "ROEWE", "ROVER", "SAAB", "SAIC",
+            "SAICMAXUS", "SATURN", "SCANIA", "SHACMAN", "SK", "SMA", "SMART",
+            "SOUEAST", "SSANGYONG", "SUBARU", "SUZUKI", "SWM", "TANK", "TESLA",
+            "TOYOTA", "TRUMPCHI", "VENUCIA", "VOLVO", "VOYAH", "VW", "WAZI",
+            "WULING", "XIAOPENG", "YEMA", "ZEEKR", "ZHONGHUA", "ZOTYE",
+            # OEM variants
+            "BAIC_OEM", "BENZ_OEM", "BYD_OEM", "CHANA_OEM", "CHANGAN_OEM",
+            "CHERY_OEM", "CHEVROLET_OEM", "FORD_OEM", "FOTON_OEM", "GACG_OEM",
+            "GEELY_OEM", "GM_OEM", "GWM_OEM", "HAVAL_OEM", "HYUNDAI_OEM",
+            "JETOUR_OEM", "KIA_OEM", "LANDROVER_OEM", "LEADINGIDEAL_OEM",
+            "MAZDA_OEM", "MG_OEM", "NISSAN_OEM", "PORSCHE_OEM", "ROEWE_OEM",
+            "SAICMAXUS_OEM", "SAIC_OEM", "SHACMAN_OEM", "TOYOTA_OEM",
+            "TRUMPCHI_OEM", "VOLVO_OEM", "VOYAH_OEM", "VW_OEM", "ZEEKR_OEM",
+            # Aftermarket
+            "ACURA_AM", "AISAN", "ALFAROMEO_AM", "ALMABAT", "AUDI_AM",
+            "AUTO PARTS", "Aftermarket", "BAIC_AM", "BAOJUN_AM", "BENZ_AM",
+            "BJ212", "BMW_AM", "BOIGEVIS", "BUICK_AM", "BYD_AM", "CADILLAC_AM",
+            "CASL_AM", "CHANA_AM", "CHANGAN_AM", "CHERY_AM", "CHEVROLET_AM",
+            "CHRYSLER_AM", "CITROEN_AM", "COWIN_AM", "CTR", "DACIA_AM",
+            "DAEWOO_AM", "DAIHATSU_AM", "DFFS_AM", "DFFX_AM", "DFSK_AM",
+            "DF_AM", "DODGE_AM", "EVERUS_AM", "EXEED_AM", "FEIDIE_AM",
+            "FENGGUANG_AM", "FIAT_AM", "FORD_AM", "FOTON_AM", "GAC",
+            "GACAION_AM", "GACG_AM", "GEELY_AM", "GM_AM", "GWM_AM", "HAFEI_AM",
+            "HAVAL_AM", "HONDA_AM", "HONGQI_AM", "HUANSU_AM", "HYUNDAI_AM",
+            "INFINITI_AM", "ISUZU_AM", "IVECO_AM", "JAC_AM", "JAGUAR_AM",
+            "JAPD", "JEEP_AM", "JETOUR_AM", "KIA_AM", "KIRSTEN", "KOYORAD",
+            "LADA_AM", "LANDROVER_AM", "LEADINGIDEAL_AM", "LEOPAARD_AM",
+            "LEXUS_AM", "LIFAN_AM", "Li Auto_AM", "MAZDA_AM", "MG_AM",
+            "MINI_AM", "MITSUBISHI_AM", "MuNiK", "NIBD", "NISSAN_AM",
+            "OMODA_AM", "OPEL_AM", "OUSHANG_AM", "PERODUA_AM", "PEUGEOT_AM",
+            "PORSCHE_AM", "PROTON_AM", "RENAULT_AM", "ROEWE_AM",
+            "SAICMAXUS_AM", "SAIC_AM", "SCANIA_AM", "SE_AM", "SK_AM",
+            "SSANGYONG_AM", "SUBARU_AM", "SUZUKI_AM", "TANK_AM", "TESLA_AM",
+            "TOYOTA_AM", "TRUMPCHI_AM", "UROparts", "VENUCIA_AM", "VIKA",
+            "VOLVO_AM", "VOYAH_AM", "VW_AM", "WEY_AM", "WULING_AM", "XENIA_AM",
+            "XG", "XHJ", "YULONG", "ZEEKR_AM", "ZOTYE_AM", "kibi",
+            # Proveedores aftermarket
+            "3M", "ADVICS", "AFS", "AIRPLEX", "AISIN", "AOLAIQI", "ATE",
+            "AUTOPACC", "Andfore", "Asanetwork", "BANDO", "BENDIX", "BILSTEIN",
+            "BO YU", "BORGWARNER", "BOSCH", "BREMBO", "Biuceodein", "CARTUSTAR",
+            "CHAMPION", "CHUGUANG", "CONTINENTAL", "CONTITECH", "CORTECO",
+            "CanpartPro", "Continenta_1", "DANA", "DAYCO", "DEBAIJIA", "DELPHI",
+            "DENSO", "DFT", "DINGHU", "ELITES", "ELRING", "Elwis Royal",
+            "Evertech", "FAG", "FEBI", "FERODO", "Filtron", "GALFER", "GATES",
+            "GE", "GEBA", "GGT", "GKN", "Goodman", "HELLA", "HENGST", "HITACH",
+            "Hitachi Astemo", "Hutchinson", "INA", "INA1", "JHAEM", "KOYO",
+            "KS", "KUWADA", "KYB", "LAILI", "LEMFORDER", "LPR", "LUK", "Litens",
+            "Lucas", "Lynx", "MAHLE", "MAHLE BEHR", "MANN", "MARELLI", "MARWELL",
+            "MENGNUO", "MICRON AIR", "MICRONAIR", "MINTEX", "MOOG", "MOTUL",
+            "NGK", "NISSENS", "NSK", "NTK", "NTN", "OETEHUI", "OSRAM", "Oudesi",
+            "PHILIPS", "PIERBURG", "REACH", "SACHS", "SANDEN", "SDS", "SEG",
+            "SENSATA", "SHILE", "SKF", "SOFIMA", "SOGEFIPRO", "SSB", "STABILUS",
+            "SVES", "Sidem", "TEMB", "TEXTAR", "TROOFTEC", "TRW", "TUOPU",
+            "UFI", "USHONE", "VAG", "VALEO", "VDO", "VW_FAW", "VW_IMP",
+            "VW_SAIC", "Victor Reinz", "Vitesco", "WAHLER", "WEISHIDUN",
+            "WOKELI", "YIQIFAWAY", "ZF", "ZF/LEMFORDER", "Zimmermann", "kaierbi",
+            "wabco",
+        }
+
+    marcas_lista = sorted(marcas)
+    logger.info("Filtro completo construido: %d marcas", len(marcas_lista))
+    return {
+        "brand": marcas_lista,
+        "vehicle_relation_id_arr": marcas_lista,  # mismo set para ambos params
+    }
+
+
 def _to_int_year(valor) -> Optional[int]:
     try:
         anio = int(str(valor).strip())
@@ -554,15 +660,24 @@ def sincronizar_total(
 
     - ``limite_paginas``: máximo de páginas (ideal para pruebas, p.ej. 5).
     - Resiliente: los reintentos con backoff viven en el cliente HTTP.
+
+    El endpoint query_commodity_by_category REQUIERE filtros (brand[] y
+    vehicle_relation_id_arr[]) con todas las marcas para listar el catálogo.
+    Esta función construye automáticamente ese filtro desde la BD (o fallback).
     """
     logger.info(
         "=== SYNC TOTAL: crawl paginado de piezas (limite_paginas=%s, page_size=%s) ===",
         limite_paginas or "todas", page_size or settings.cass_page_size,
     )
+    # Construir filtro completo (brand + vehicle_relation_id_arr) requerido
+    # por el endpoint query_commodity_by_category.
+    filtro = obtener_filtro_completo(db)
     procesadas = 0
     paginas = 0
     try:
-        for info in client.crawl_commodities(limite_paginas=limite_paginas, page_size=page_size):
+        for info in client.crawl_commodities(
+            limite_paginas=limite_paginas, page_size=page_size, filtro=filtro
+        ):
             paginas += 1
             for entry in info["results"]:
                 # Cada entry debe tener parts_number + products. Si el endpoint

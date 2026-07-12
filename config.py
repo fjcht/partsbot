@@ -53,12 +53,11 @@ class Settings:
         "/api/method/merchant_app.api.product.ProductController.query_commodity",
     )
     # Endpoint de BÚSQUEDA/LISTADO paginado de piezas (crawl masivo).
-    # Por defecto se reutiliza query_commodity con parámetros de paginación;
-    # si CassChoice expone un endpoint de "search commodity" distinto, se puede
-    # sobrescribir con CASS_SEARCH_ENDPOINT en el .env.
+    # El endpoint real es query_commodity_by_category, que requiere filtros
+    # brand[] y vehicle_relation_id_arr[] con todas las marcas/vehículos.
     cass_search_endpoint: str = _get(
         "CASS_SEARCH_ENDPOINT",
-        "/api/method/merchant_app.api.product.ProductController.query_commodity",
+        "/api/method/merchant_app.api.product.ProductController.query_commodity_by_category",
     )
 
     # --- Crawl / paginación ---

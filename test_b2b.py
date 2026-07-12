@@ -255,6 +255,37 @@ check("total_pages=500", pag["total_pages"] == 500)
 check("has_next=True", pag["has_next"] is True)
 check("page=1", pag["page"] == 1)
 
+# ---------------------------------------------------------------------------
+print("\n7) Filtro completo: merge de brand[] + vehicle_relation_id_arr[] + paginación")
+
+
+# Mock para capturar el body enviado
+class _SessionCaptura:
+    def __init__(self):
+        self.ultimo_body = None
+        self.llamadas = 0
+
+    def request(self, metodo, url, *, json=None, **_kw):
+        self.llamadas += 1
+        self.ultimo_body = json
+        return _RespFake(200, {
+            "message": {"data": {"results": [], "total": 0, "total_pages": 0, "has_next": False}}
+        })
+
+
+cli_filtro = CassChoiceClient(sid="x", token="t", auto_login=False)
+cli_filtro.session = _SessionCaptura()
+filtro_custom = {
+    "brand": ["CHANGAN", "CHERY"],
+    "vehicle_relation_id_arr": ["CHANGAN", "CHERY"],
+}
+pag_filtro = cli_filtro.query_commodity_pagina(page=2, page_size=50, filtro=filtro_custom)
+check("body contiene page", cli_filtro.session.ultimo_body.get("page") == 2)
+check("body contiene pageSize", cli_filtro.session.ultimo_body.get("pageSize") == 50)
+check("body contiene brand[]", cli_filtro.session.ultimo_body.get("brand") == ["CHANGAN", "CHERY"])
+check("body contiene vehicle_relation_id_arr[]",
+      cli_filtro.session.ultimo_body.get("vehicle_relation_id_arr") == ["CHANGAN", "CHERY"])
+
 print("\n" + ("="*50))
 if _fallos == 0:
     print(f"  \033[92mTODAS LAS PRUEBAS PASARON\033[0m")
