@@ -74,7 +74,24 @@ def obtener_filtro_completo(db=None) -> dict:
 
     # Si no obtuvimos marcas de la BD, usar fallback hardcoded (del curl real).
     if not marcas:
-        marcas = {
+        marcas = set(MARCAS_REPUESTO)
+
+    marcas_lista = sorted(marcas)
+    logger.info("Filtro completo construido: %d marcas", len(marcas_lista))
+    return {
+        "brand": marcas_lista,
+        "vehicle_relation_id_arr": marcas_lista,  # mismo set para ambos params
+    }
+
+
+# ---------------------------------------------------------------------------
+# Marcas de repuesto (part brands) — universo REAL del filtro `brand[]`.
+# Tomado del curl real de la tienda CassChoice. Cada pieza tiene UNA sola
+# `brand`, así que particionar por marca de repuesto NO duplica piezas.
+# Incluye OEM (originales), _OEM, _AM (aftermarket de marca) y proveedores
+# aftermarket independientes (BOSCH, BREMBO, TRW, SKF, GATES, etc.).
+# ---------------------------------------------------------------------------
+MARCAS_REPUESTO = sorted({
             "ACURA", "ALFAROMEO", "AUDI", "AVATR", "BAIC", "BAOJUN", "BEIJING",
             "BEIJINGC", "BENTENG", "BENTLEY", "BENZ", "BMW", "BUICK", "BYD",
             "CADILLAC", "CHANGAN", "CHANGHE", "CHERY", "CHEVROLET", "CHRYSLER",
@@ -145,14 +162,210 @@ def obtener_filtro_completo(db=None) -> dict:
             "VW_SAIC", "Victor Reinz", "Vitesco", "WAHLER", "WEISHIDUN",
             "WOKELI", "YIQIFAWAY", "ZF", "ZF/LEMFORDER", "Zimmermann", "kaierbi",
             "wabco",
-        }
+})
 
-    marcas_lista = sorted(marcas)
-    logger.info("Filtro completo construido: %d marcas", len(marcas_lista))
-    return {
-        "brand": marcas_lista,
-        "vehicle_relation_id_arr": marcas_lista,  # mismo set para ambos params
+
+# ---------------------------------------------------------------------------
+# Particionado del catálogo (para superar el tope de 10.000 del API)
+# ---------------------------------------------------------------------------
+# CassChoice (backend Elasticsearch) impone un tope DURO de 10.000 resultados
+# por consulta (max_result_window). Un crawl con TODAS las marcas en un solo
+# filtro nunca ve más de 10.000 piezas. La solución es PARTICIONAR:
+#   1) Consultar marca por marca (cada pieza tiene UNA sola `brand`, así que
+#      sumar por marca NO duplica).
+#   2) Para las marcas que igual topan en 10.000, sub-particionar por
+#      `vehicle_relation_id` a nivel modelo (BRAND#Modelo).
+# Al crawlear se deduplica por `parts_number` (una pieza encaja en varios
+# vehículos, por eso las sub-particiones se solapan).
+TOPE_API = 10000
+
+
+def _marcas_repuesto(db=None) -> List[str]:
+    """
+    Devuelve la lista de MARCAS DE REPUESTO (part brands, el param ``brand[]``)
+    para particionar el crawl.
+
+    IMPORTANTE: son marcas de REPUESTO (OEM/AM/proveedores), NO marcas de
+    vehículo. Siempre se usa la lista fija ``MARCAS_REPUESTO`` (tomada del curl
+    real de la tienda); NO se leen de la BD, porque en la BD sólo viven las
+    relaciones de vehículo (``vehicle_relation_id``), que son otra dimensión.
+    """
+    return list(MARCAS_REPUESTO)
+
+
+def _relaciones_por_marca(db) -> dict:
+    """
+    Agrupa los ``vehicle_relation_id`` a nivel MODELO (BRAND#Modelo) por su
+    marca de vehículo, leyéndolos de CatalogoVehiculos. Devuelve
+    ``{marca_vehiculo: [relation_id, ...]}``.
+    """
+    grupos: dict = {}
+    if db is None:
+        return grupos
+    try:
+        q = db.query(models.CatalogoVehiculos.vehicle_relation_id).distinct()
+        for (vr,) in q:
+            if not vr or "#" not in vr:
+                continue
+            # Nivel modelo = exactamente un '#': BRAND#Modelo (ignorar año).
+            marca = vr.split("#", 1)[0]
+            base_modelo = "#".join(vr.split("#")[:2])  # BRAND#Modelo
+            grupos.setdefault(marca, set()).add(base_modelo)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("No se pudieron leer relaciones por marca: %s", exc)
+    return {k: sorted(v) for k, v in grupos.items()}
+
+
+def obtener_particiones(client, db, page_size_sonda: int = 1):
+    """
+    Generador de particiones de filtro, cada una GARANTIZADA bajo el tope de
+    10.000 (en la medida de lo posible). Emite tuplas ``(etiqueta, filtro, total)``.
+
+    Estrategia:
+      - Para cada marca de repuesto se consulta su ``total``.
+      - Si total < 10.000  -> se emite ``{"brand": [marca]}`` (partición directa).
+      - Si total >= 10.000 (marca TOPADA) -> se emite SIEMPRE la partición base
+        ``{"brand": [marca]}`` (que recupera las primeras 10.000 piezas) Y ADEMÁS
+        se intenta sub-particionar por ``vehicle_relation_id`` a nivel modelo
+        para alcanzar las piezas por encima de la ventana de 10.000. El crawler
+        deduplica por ``parts_number``, así que el solape entre la base y las
+        sub-particiones no genera duplicados.
+
+    NOTA sobre el sub-particionado por vehículo: sólo aporta piezas EXTRA para
+    marcas cuyas piezas están efectivamente etiquetadas contra relaciones de
+    vehículo del mismo nombre (p.ej. BMW). Para marcas cuyo mapeo marca->vehículo
+    no coincide (p.ej. la marca de repuesto ``BENZ`` frente al prefijo de
+    vehículo ``MERCEDESBENZ``) o proveedores aftermarket sin vehículo asociado
+    (BOSCH, TRW, SKF...), el sub-particionado no aporta piezas nuevas y se
+    cubre lo alcanzable (10.000). Emitir SIEMPRE la base evita perder esas
+    piezas.
+    """
+    marcas = _marcas_repuesto(db)
+    relaciones = _relaciones_por_marca(db)
+    todos_modelos = sorted({m for lst in relaciones.values() for m in lst})
+
+    def sonda(filtro):
+        try:
+            info = client.query_commodity_pagina(page=1, page_size=page_size_sonda, filtro=filtro)
+            return info.get("total", 0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Sonda falló para %s: %s", filtro, exc)
+            return -1
+
+    for marca in marcas:
+        total = sonda({"brand": [marca]})
+        if total <= 0:
+            continue
+        if total < TOPE_API:
+            yield (marca, {"brand": [marca]}, total)
+            continue
+
+        # Marca TOPADA: emitir SIEMPRE la base (primeras 10.000)...
+        yield (marca, {"brand": [marca]}, total)
+
+        # ...y ADEMÁS sub-particionar por modelo de vehículo para las EXTRA.
+        modelos = relaciones.get(marca) or todos_modelos
+        if not modelos:
+            logger.info(
+                "Marca '%s' topa en %d y no hay modelos para sub-particionar; "
+                "se cubre hasta 10.000.", marca, TOPE_API,
+            )
+            continue
+
+        logger.info(
+            "Marca '%s' topa en 10.000 -> probando %d modelo(s) para piezas extra.",
+            marca, len(modelos),
+        )
+        emitidas = 0
+        for modelo in modelos:
+            filtro = {"brand": [marca], "vehicle_relation_id_arr": [modelo]}
+            sub = sonda(filtro)
+            if sub <= 0:
+                continue
+            emitidas += 1
+            yield (f"{marca}|{modelo}", filtro, sub)
+        if emitidas == 0:
+            logger.info(
+                "Marca '%s': el sub-particionado por vehículo no aportó piezas "
+                "extra (mapeo marca->vehículo no coincide); cubierta hasta 10.000.",
+                marca,
+            )
+
+
+def contar_catalogo(db, client: CassChoiceClient, exacto_topadas: bool = False) -> dict:
+    """
+    Cuenta el catálogo de CassChoice SIN crawlear todas las piezas.
+
+    Suma el ``total`` de cada marca de repuesto (cada pieza tiene una sola
+    ``brand``, así que la suma no duplica). Identifica las marcas que topan en
+    10.000 (tienen más piezas de las que el API revela en una consulta).
+
+    - ``exacto_topadas=False`` (rápido): las marcas topadas cuentan como 10.000
+      (piso). Devuelve el conteo mínimo garantizado + lista de topadas.
+    - ``exacto_topadas=True`` (lento): sub-particiona y DEDUPLICA por
+      ``parts_number`` las marcas topadas para su conteo exacto (requiere
+      descargar sus números de parte).
+    """
+    marcas = _marcas_repuesto(db)
+    detalle = {}
+    topadas = []
+    suma = 0
+    for i, marca in enumerate(marcas):
+        try:
+            info = client.query_commodity_pagina(page=1, page_size=1, filtro={"brand": [marca]})
+            total = info.get("total", 0)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Conteo falló para %s: %s", marca, exc)
+            continue
+        detalle[marca] = total
+        suma += total
+        if total >= TOPE_API:
+            topadas.append(marca)
+        if (i + 1) % 50 == 0:
+            logger.info("Conteo: %d/%d marcas, suma parcial %d", i + 1, len(marcas), suma)
+
+    resultado = {
+        "marcas_consultadas": len(detalle),
+        "suma_piso": suma,          # con topadas contadas como 10.000
+        "marcas_topadas": topadas,
+        "detalle": detalle,
     }
+
+    if exacto_topadas and topadas:
+        logger.info("Conteo EXACTO de %d marca(s) topada(s) (con dedup)...", len(topadas))
+        relaciones = _relaciones_por_marca(db)
+        todos_modelos = sorted({m for lst in relaciones.values() for m in lst})
+        extra = 0
+        exacto_por_marca = {}
+        for marca in topadas:
+            modelos = relaciones.get(marca) or todos_modelos
+            vistos = set()
+            for modelo in modelos:
+                filtro = {"brand": [marca], "vehicle_relation_id_arr": [modelo]}
+                for pagina in client.crawl_commodities(page_size=50, filtro=filtro):
+                    for entry in pagina["results"]:
+                        pn = entry.get("parts_number") or entry.get("partsNumber")
+                        if pn:
+                            vistos.add(pn)
+            # El sub-particionado por vehículo sólo aporta el conteo exacto para
+            # marcas alineables con vehículos (BMW). Para las que no (BENZ,
+            # proveedores AM), devuelve < 10.000: en ese caso NO sabemos el
+            # exacto, así que conservamos el piso de 10.000 (extra 0).
+            piezas = max(len(vistos), TOPE_API)
+            exacto_por_marca[marca] = {
+                "piezas_estimadas": piezas,
+                "unicas_por_vehiculo": len(vistos),
+                "exacto_confiable": len(vistos) > TOPE_API,
+            }
+            extra += piezas - TOPE_API  # ya contamos 10.000 en suma_piso
+            logger.info(
+                "  %s: %d piezas únicas vía vehículo (estimado %d).",
+                marca, len(vistos), piezas,
+            )
+        resultado["exacto_por_marca_topada"] = exacto_por_marca
+        resultado["total_exacto"] = suma + extra
+
+    return resultado
 
 
 def _to_int_year(valor) -> Optional[int]:
@@ -644,63 +857,90 @@ def sincronizar_piezas(
     return procesadas
 
 
+def _procesar_pagina(db, info, vistos, usar_ia) -> int:
+    """Procesa los resultados de una página, deduplicando por parts_number."""
+    nuevas = 0
+    for entry in info["results"]:
+        pn = entry.get("parts_number") or entry.get("partsNumber")
+        if pn and pn in vistos:
+            continue  # ya procesada en otra partición/página (dedup global)
+        if pn:
+            vistos.add(pn)
+        # Cada entry debe tener parts_number + products. Si el endpoint
+        # de búsqueda entrega productos sueltos, los envolvemos.
+        if "products" not in entry and pn:
+            entry = {"parts_number": pn, "products": [entry]}
+        try:
+            if _procesar_resultado_parte(db, entry, usar_ia=usar_ia):
+                nuevas += 1
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.exception("Error procesando %s: %s", pn, exc)
+    return nuevas
+
+
 def sincronizar_total(
     db,
     client: CassChoiceClient,
     limite_paginas: Optional[int] = None,
     page_size: Optional[int] = None,
     usar_ia: bool = True,
+    particionar: bool = True,
 ) -> int:
     """
-    Crawl MASIVO del catálogo de piezas de CassChoice, página por página,
-    usando ``total_pages`` / ``has_next``. Cada resultado de cada página se
-    procesa igual que en la sincronización por número de parte (crea/actualiza
-    la Autoparte, precios, códigos y compatibilidades; usa IA como fallback de
-    fitment para marcas chinas).
+    Crawl MASIVO del catálogo de piezas de CassChoice.
 
-    - ``limite_paginas``: máximo de páginas (ideal para pruebas, p.ej. 5).
+    El API impone un tope DURO de 10.000 resultados por consulta, así que un
+    crawl con un único filtro global nunca supera 10.000 piezas. Por defecto
+    (``particionar=True``) se recorre el catálogo PARTICIONADO por marca de
+    repuesto (y sub-particionado por modelo de vehículo para las marcas que
+    topan), deduplicando por ``parts_number`` para obtener el catálogo COMPLETO.
+
+    - ``particionar=False``: modo antiguo (un solo filtro, máx. 10.000). Útil
+      para pruebas rápidas.
+    - ``limite_paginas``: máximo de páginas POR PARTICIÓN (ideal para pruebas).
     - Resiliente: los reintentos con backoff viven en el cliente HTTP.
-
-    El endpoint query_commodity_by_category REQUIERE filtros (brand[] y
-    vehicle_relation_id_arr[]) con todas las marcas para listar el catálogo.
-    Esta función construye automáticamente ese filtro desde la BD (o fallback).
     """
     logger.info(
-        "=== SYNC TOTAL: crawl paginado de piezas (limite_paginas=%s, page_size=%s) ===",
+        "=== SYNC TOTAL: crawl %s (limite_paginas=%s, page_size=%s) ===",
+        "PARTICIONADO" if particionar else "simple",
         limite_paginas or "todas", page_size or settings.cass_page_size,
     )
-    # Construir filtro completo (brand + vehicle_relation_id_arr) requerido
-    # por el endpoint query_commodity_by_category.
-    filtro = obtener_filtro_completo(db)
+    vistos: set = set()
     procesadas = 0
-    paginas = 0
-    try:
-        for info in client.crawl_commodities(
-            limite_paginas=limite_paginas, page_size=page_size, filtro=filtro
-        ):
-            paginas += 1
-            for entry in info["results"]:
-                # Cada entry debe tener parts_number + products. Si el endpoint
-                # de búsqueda entrega productos sueltos, los envolvemos.
-                if "products" not in entry and ("parts_number" in entry or "partsNumber" in entry):
-                    entry = {
-                        "parts_number": entry.get("parts_number") or entry.get("partsNumber"),
-                        "products": [entry],
-                    }
-                try:
-                    if _procesar_resultado_parte(db, entry, usar_ia=usar_ia):
-                        procesadas += 1
-                except Exception as exc:  # noqa: BLE001
-                    db.rollback()
-                    logger.exception(
-                        "Error procesando %s: %s", entry.get("parts_number"), exc
-                    )
-    except CassChoiceError as exc:
-        logger.error("Crawl interrumpido: %s", exc)
+
+    if not particionar:
+        # Modo simple: un solo filtro global (limitado a 10.000 por el API).
+        filtro = obtener_filtro_completo(db)
+        try:
+            for info in client.crawl_commodities(
+                limite_paginas=limite_paginas, page_size=page_size, filtro=filtro
+            ):
+                procesadas += _procesar_pagina(db, info, vistos, usar_ia)
+                db.commit()
+        except CassChoiceError as exc:
+            logger.error("Crawl interrumpido: %s", exc)
+        logger.info("SYNC TOTAL (simple) finalizado: %d pieza(s).", procesadas)
+        return procesadas
+
+    # Modo particionado: recorre marca por marca (y modelo por modelo si topa).
+    n_part = 0
+    for etiqueta, filtro, total in obtener_particiones(client, db):
+        n_part += 1
+        logger.info("[Partición %d] %s (total reportado: %d)", n_part, etiqueta, total)
+        try:
+            for info in client.crawl_commodities(
+                limite_paginas=limite_paginas, page_size=page_size, filtro=filtro
+            ):
+                procesadas += _procesar_pagina(db, info, vistos, usar_ia)
+            db.commit()
+        except CassChoiceError as exc:
+            logger.error("Partición '%s' interrumpida: %s", etiqueta, exc)
+            db.rollback()
 
     logger.info(
-        "SYNC TOTAL finalizado: %d pieza(s) procesada(s) en %d página(s).",
-        procesadas, paginas,
+        "SYNC TOTAL (particionado) finalizado: %d pieza(s) ÚNICA(S) en %d partición(es).",
+        procesadas, n_part,
     )
     return procesadas
 
@@ -991,10 +1231,35 @@ def main():
         ),
     )
     parser.add_argument(
+        "--sin-particion",
+        action="store_true",
+        help=(
+            "Desactiva el particionado en --sync-total (un solo filtro global, "
+            "limitado a 10.000 piezas por el tope del API). Sólo para pruebas."
+        ),
+    )
+    parser.add_argument(
+        "--contar-catalogo",
+        action="store_true",
+        help=(
+            "Cuenta el catálogo de CassChoice SIN crawlear todas las piezas: "
+            "suma el total por marca de repuesto e identifica las marcas que "
+            "topan en 10.000. Rápido (~2 min)."
+        ),
+    )
+    parser.add_argument(
+        "--contar-exacto",
+        action="store_true",
+        help=(
+            "Con --contar-catalogo: sub-particiona y DEDUPLICA las marcas topadas "
+            "para el conteo EXACTO (lento; descarga sus números de parte)."
+        ),
+    )
+    parser.add_argument(
         "--limit-pages",
         type=int,
         default=None,
-        help="Máximo de páginas a recorrer en --sync-total (p.ej. 5 para probar).",
+        help="Máximo de páginas por partición en --sync-total (p.ej. 5 para probar).",
     )
     parser.add_argument(
         "--page-size",
@@ -1032,6 +1297,33 @@ def main():
         logger.info("Sincronización finalizada.")
         return
 
+    # Conteo del catálogo (sin crawl completo).
+    if args.contar_catalogo:
+        client = CassChoiceClient()
+        db = database.SessionLocal()
+        try:
+            r = contar_catalogo(db, client, exacto_topadas=args.contar_exacto)
+            print("\n" + "=" * 70)
+            print("CONTEO DEL CATÁLOGO CASSCHOICE")
+            print("=" * 70)
+            print(f"Marcas de repuesto consultadas: {r['marcas_consultadas']}")
+            print(f"Piezas (piso, topadas=10.000):  {r['suma_piso']:,}")
+            print(f"Marcas topadas (tienen más):    {len(r['marcas_topadas'])}")
+            print(f"  {', '.join(r['marcas_topadas'])}")
+            if "total_exacto" in r:
+                print(f"\nTOTAL EXACTO (con dedup de topadas): {r['total_exacto']:,}")
+                for m, d in sorted(r["exacto_por_marca_topada"].items(),
+                                   key=lambda x: -x[1]["piezas_estimadas"]):
+                    marca_ok = "exacto" if d["exacto_confiable"] else "piso 10.000"
+                    print(f"  {m:20} {d['piezas_estimadas']:>8,}  ({marca_ok})")
+            else:
+                print("\n(usa --contar-exacto para el conteo exacto de las topadas)")
+            print("=" * 70)
+        finally:
+            db.close()
+        logger.info("Conteo finalizado.")
+        return
+
     # Crawl masivo paginado del catálogo de piezas.
     if args.sync_total:
         client = CassChoiceClient()
@@ -1042,6 +1334,7 @@ def main():
                 limite_paginas=args.limit_pages,
                 page_size=args.page_size,
                 usar_ia=not args.sin_ia,
+                particionar=not args.sin_particion,
             )
         finally:
             db.close()
