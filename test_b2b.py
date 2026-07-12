@@ -223,6 +223,38 @@ check("CSV incluye CHANGAN Alsvin", "CHANGAN Alsvin" in contenido)
 
 db.close()
 
+# ---------------------------------------------------------------------------
+print("\n6) Parser con formato EXACTO de partes.md (message.data anidado)")
+
+# Formato real del endpoint de listado masivo (ver partes.md en el repo).
+resp_real = {
+    "message": {
+        "code": 200,
+        "message": "Success",
+        "data": {
+            "results": [
+                {"parts_number": "TEST-001", "total": 1, "products": []},
+                {"parts_number": "TEST-002", "total": 1, "products": []},
+            ],
+            "total": 10000,
+            "page": 1,
+            "page_size": 20,
+            "total_pages": 500,
+            "has_next": True,
+            "has_prev": False,
+        }
+    }
+}
+
+cli_parse = CassChoiceClient(sid="x", token="t", auto_login=False)
+cli_parse.session = _SessionFake([_RespFake(200, resp_real)])
+pag = cli_parse.query_commodity_pagina(page=1, page_size=20)
+check("results extraídos", len(pag["results"]) == 2)
+check("total=10000", pag["total"] == 10000)
+check("total_pages=500", pag["total_pages"] == 500)
+check("has_next=True", pag["has_next"] is True)
+check("page=1", pag["page"] == 1)
+
 print("\n" + ("="*50))
 if _fallos == 0:
     print(f"  \033[92mTODAS LAS PRUEBAS PASARON\033[0m")
